@@ -25,3 +25,5 @@ tqdm>=4.66.0
 
 # Testing & Quality Assurance
 pytest>=8.0.0
+
+ipykernel
