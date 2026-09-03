@@ -3,6 +3,7 @@ sumo-rl>=1.4.3
 gymnasium>=0.29.1
 stable-baselines3>=2.3.0
 shimmy>=1.3.0
+libsumo
 
 # Deep Learning Backbone
 torch>=2.2.0
