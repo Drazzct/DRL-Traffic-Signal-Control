@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "traffic_drl"
+version = "0.1.0"
+description = "Mixed-traffic signal control using SUMO-RL and Stable-Baselines3"
+dependencies = [
+    "gymnasium>=0.29.0",
+    "sumo-rl>=1.4.3",
+    "stable-baselines3>=2.3.0",
+    "libsumo",
+    "traci"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
