@@ -1,0 +1,26 @@
+benchmark:
+  name: phase1_validation
+  split: VA
+  deterministic: true
+  episodes_per_scenario: 1
+manifest_path: scenarios/scenario_manifest.csv
+env_config_path: configs/environment/dev_single_intersection.yaml
+checksum_file: scenarios/checksums.sha256
+evaluation_seeds: [101, 102, 103]
+scenarios: [VA-01, VA-02]
+artifacts:
+  model_checkpoint: outputs/checkpoints/dqn_phase1.zip
+  vec_normalize_stats: outputs/checkpoints/dqn_phase1_vecnormalize.pkl
+normalization:
+  training: false
+  norm_reward: false
+reporting:
+  output_dir: outputs/results/phase1_validation
+  save_tripinfo: true
+  metrics_to_collect:
+    - average_waiting_time
+    - average_queue_length
+    - time_loss
+    - throughput
+    - phase_switch_rate
+    - min_green_violations
