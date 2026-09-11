@@ -77,6 +77,7 @@ class TimingConfig:
     num_seconds: int
     delta_time: int
     min_green: int
+    max_green: int
     yellow_time: int
 
 
@@ -87,6 +88,7 @@ class SumoOptions:
     use_gui: bool
     lateral_resolution: float
     additional_sumo_cmd: str
+    save_tripinfo: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,11 +119,13 @@ class EnvConfig:
           num_seconds: 3600
           delta_time: 5
           min_green: 5
+          max_green: 60
           yellow_time: 2
         sumo_options:
           use_gui: false
           lateral_resolution: 0.0
           additional_sumo_cmd: ""
+          save_tripinfo: false
         observation_bounds:
           max_queue_per_lane: 10.0
           max_time_in_phase: 60.0
@@ -298,7 +302,7 @@ def load_env_config(
     _require(tl, ["ts_id", "single_agent"], "traffic_light")
 
     timing = raw["timing"]
-    _require(timing, ["num_seconds", "delta_time", "min_green", "yellow_time"], "timing")
+    _require(timing, ["num_seconds", "delta_time", "min_green", "max_green", "yellow_time"], "timing")
 
     sumo = raw["sumo_options"]
     _require(sumo, ["use_gui", "lateral_resolution", "additional_sumo_cmd"], "sumo_options")
@@ -320,12 +324,14 @@ def load_env_config(
             num_seconds=int(timing["num_seconds"]),
             delta_time=int(timing["delta_time"]),
             min_green=int(timing["min_green"]),
+            max_green=int(timing["max_green"]),
             yellow_time=int(timing["yellow_time"]),
         ),
         sumo_options=SumoOptions(
             use_gui=bool(sumo["use_gui"]),
             lateral_resolution=float(sumo["lateral_resolution"]),
             additional_sumo_cmd=str(sumo.get("additional_sumo_cmd", "")),
+            save_tripinfo=bool(sumo.get("save_tripinfo", False)),
         ),
         observation_bounds=ObservationBoundsConfig(
             max_queue_per_lane=float(obs["max_queue_per_lane"]),

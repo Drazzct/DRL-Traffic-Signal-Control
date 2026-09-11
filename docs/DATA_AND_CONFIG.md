@@ -15,9 +15,9 @@ Store files at these repository-relative paths. Never hardcode absolute paths to
 | Train/Valid Routes     | `scenarios/train/`, `validation/`      | SUMO-RL via `ScenarioManifest`                          |
 | SUMO Network           | `sumo/net/`                            | SUMO-RL / SUMO CLI                                      |
 | SUMO Additions         | `sumo/additional/`                     | SUMO-RL / SUMO CLI                                      |
-| Checkpoints            | `outputs/checkpoints/`                 | SB3 loaders (`checkpointing.py`)                        |
-| Tripinfo & Emissions   | `outputs/tripinfo/<run_id>/`           | `evaluation/parse_tripinfo.py`                          |
-| Results & Metrics      | `outputs/results/`                     | `evaluation/plots.py`                                   |
+| Checkpoints            | `outputs/runs/<run_id>/checkpoints/`                 | SB3 loaders (`checkpointing.py`)                        |
+| Tripinfo & Emissions   | `outputs/runs/<run_id>/tripinfo/`           | `evaluation/parse_tripinfo.py`                          |
+| Results & Metrics      | `outputs/runs/<run_id>/results/`                     | `evaluation/plots.py`                                   |
 
 ## 2. YAML Configuration Schemas
 
@@ -37,11 +37,13 @@ timing:
   num_seconds: 3600
   delta_time: 5
   min_green: 10
+  max_green: 60
   yellow_time: 3
 sumo_options:
   use_gui: false
   lateral_resolution: 1.2
   additional_sumo_cmd: ""
+  save_tripinfo: false
 observation_bounds:
   max_queue_per_lane: 50.0
   max_time_in_phase: 120.0
@@ -92,13 +94,13 @@ checksum_file: scenarios/checksums.sha256
 evaluation_seeds: [101, 102, 103]
 scenarios: [VA-01, VA-02, VA-03]
 artifacts:
-  model_checkpoint: outputs/checkpoints/dqn_model.zip
-  vec_normalize_stats: outputs/checkpoints/dqn_norm.pkl
+  model_checkpoint: outputs/runs/my_run_id/checkpoints/dqn_model.zip
+  vec_normalize_stats: outputs/runs/my_run_id/checkpoints/dqn_norm.pkl
 normalization:
   training: false
   norm_reward: false
 reporting:
-  output_dir: outputs/results/validation
+  output_dir: outputs/runs/my_eval_run/results
   save_tripinfo: true
   metrics_to_collect:
     - average_waiting_time

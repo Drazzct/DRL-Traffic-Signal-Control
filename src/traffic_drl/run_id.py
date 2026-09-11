@@ -14,6 +14,7 @@ Typical usage
     tripinfo_dir, results_dir = ensure_run_directories(run_id)
 """
 from __future__ import annotations
+from typing import Literal
 
 import hashlib
 import uuid
@@ -26,6 +27,7 @@ def generate_run_id(
     use_timestamp: bool = True,
     use_uuid: bool = False,
     custom_string: str | None = None,
+    run_type: Literal['train', 'val', 'test'] = 'train',
 ) -> str:
     """Generate a unique, filesystem-safe run ID.
 
@@ -34,6 +36,7 @@ def generate_run_id(
         use_timestamp: Include a ``YYYYMMDD_HHMMSS`` timestamp component.
         use_uuid: Append a UUID4 for guaranteed global uniqueness.
         custom_string: Optional free-form suffix.
+        run_type: The type of run the environment uses (train, val, test)
 
     Returns:
         str: A run ID safe for use in file and directory names.
@@ -58,118 +61,115 @@ def generate_run_id(
 
     if custom_string:
         components.append(custom_string)
+    
+    components.append(run_type)
 
     raw = "_".join(components)
     # Keep only alphanumeric, underscore, and hyphen characters.
     return "".join(c if c.isalnum() or c in "_-" else "_" for c in raw)
 
 
-def get_tripinfo_dir(
+def get_run_dir(
     run_id: str,
-    base_dir: str | Path = "outputs/tripinfo",
+    base_dir: str | Path = "outputs/runs",
 ) -> Path:
-    """Return the tripinfo output directory for *run_id*.
+    """Return the base directory for *run_id*.
 
     Args:
         run_id: The run identifier.
-        base_dir: Base directory under which the run subdirectory sits.
+        base_dir: Base directory under which all runs sit.
 
     Returns:
         Path: ``<base_dir>/<run_id>``
     """
     return Path(base_dir) / run_id
+
+
+def get_tripinfo_dir(
+    run_id: str,
+    base_dir: str | Path = "outputs/runs",
+) -> Path:
+    """Return the tripinfo output directory for *run_id*."""
+    return get_run_dir(run_id, base_dir) / "tripinfo"
 
 
 def get_results_dir(
     run_id: str,
-    base_dir: str | Path = "outputs/results",
+    base_dir: str | Path = "outputs/runs",
 ) -> Path:
-    """Return the results output directory for *run_id*.
+    """Return the results output directory for *run_id*."""
+    return get_run_dir(run_id, base_dir) / "results"
 
-    Args:
-        run_id: The run identifier.
-        base_dir: Base directory under which the run subdirectory sits.
 
-    Returns:
-        Path: ``<base_dir>/<run_id>``
-    """
-    return Path(base_dir) / run_id
+def get_checkpoints_dir(
+    run_id: str,
+    base_dir: str | Path = "outputs/runs",
+) -> Path:
+    """Return the checkpoints directory for *run_id*."""
+    return get_run_dir(run_id, base_dir) / "checkpoints"
+
+
+def get_logs_dir(
+    run_id: str,
+    base_dir: str | Path = "outputs/runs",
+) -> Path:
+    """Return the logs directory for *run_id*."""
+    return get_run_dir(run_id, base_dir) / "logs"
 
 
 def get_tripinfo_path(
     run_id: str,
-    base_dir: str | Path = "outputs/tripinfo",
+    base_dir: str | Path = "outputs/runs",
 ) -> Path:
-    """Return the ``tripinfo.xml`` file path for *run_id*.
-
-    Args:
-        run_id: The run identifier.
-        base_dir: Base tripinfo directory.
-
-    Returns:
-        Path: ``<base_dir>/<run_id>/tripinfo.xml``
-    """
+    """Return the ``tripinfo.xml`` file path for *run_id*."""
     return get_tripinfo_dir(run_id, base_dir) / "tripinfo.xml"
 
 
 def get_emissions_path(
     run_id: str,
-    base_dir: str | Path = "outputs/tripinfo",
+    base_dir: str | Path = "outputs/runs",
 ) -> Path:
-    """Return the ``emissions.xml`` file path for *run_id*.
-
-    Args:
-        run_id: The run identifier.
-        base_dir: Base tripinfo directory.
-
-    Returns:
-        Path: ``<base_dir>/<run_id>/emissions.xml``
-    """
+    """Return the ``emissions.xml`` file path for *run_id*."""
     return get_tripinfo_dir(run_id, base_dir) / "emissions.xml"
 
 
 def get_metrics_path(
     run_id: str,
-    base_dir: str | Path = "outputs/results",
+    base_dir: str | Path = "outputs/runs",
 ) -> Path:
-    """Return the ``metrics.csv`` file path for *run_id*.
-
-    Args:
-        run_id: The run identifier.
-        base_dir: Base results directory.
-
-    Returns:
-        Path: ``<base_dir>/<run_id>/metrics.csv``
-    """
+    """Return the ``metrics.csv`` file path for *run_id*."""
     return get_results_dir(run_id, base_dir) / "metrics.csv"
 
 
 def ensure_run_directories(
     run_id: str,
-    tripinfo_base: str | Path = "outputs/tripinfo",
-    results_base: str | Path = "outputs/results",
-) -> tuple[Path, Path]:
-    """Create the tripinfo and results directories for *run_id* if needed.
+    base_dir: str | Path = "outputs/runs",
+) -> tuple[Path, Path, Path, Path]:
+    """Create all standard output directories for *run_id* if needed.
 
     Args:
         run_id: The run identifier.
-        tripinfo_base: Base directory for tripinfo outputs.
-        results_base: Base directory for results outputs.
+        base_dir: Base directory for all runs.
 
     Returns:
-        tuple[Path, Path]: ``(tripinfo_dir, results_dir)`` as absolute paths.
+        tuple[Path, Path, Path, Path]: ``(tripinfo, results, checkpoints, logs)`` directories.
     """
-    tripinfo_dir = get_tripinfo_dir(run_id, tripinfo_base)
-    results_dir = get_results_dir(run_id, results_base)
+    tripinfo_dir = get_tripinfo_dir(run_id, base_dir)
+    results_dir = get_results_dir(run_id, base_dir)
+    checkpoints_dir = get_checkpoints_dir(run_id, base_dir)
+    logs_dir = get_logs_dir(run_id, base_dir)
+    
     tripinfo_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
-    return tripinfo_dir, results_dir
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    
+    return tripinfo_dir, results_dir, checkpoints_dir, logs_dir
 
 
 def create_sumo_output_options(
     run_id: str,
-    tripinfo_base: str | Path = "outputs/tripinfo",
-    emissions_base: str | Path = "outputs/tripinfo",
+    base_dir: str | Path = "outputs/runs",
 ) -> dict[str, str]:
     """Build SUMO command-line options for tripinfo and emissions output.
 
@@ -178,14 +178,13 @@ def create_sumo_output_options(
 
     Args:
         run_id: The run identifier.
-        tripinfo_base: Base directory for tripinfo outputs.
-        emissions_base: Base directory for emissions outputs.
+        base_dir: Base directory for all runs.
 
     Returns:
         dict[str, str]: ``{"tripinfo-output": "<path>", "emission-output": "<path>"}``.
     """
-    tripinfo_path = get_tripinfo_path(run_id, tripinfo_base)
-    emissions_path = get_emissions_path(run_id, emissions_base)
+    tripinfo_path = get_tripinfo_path(run_id, base_dir)
+    emissions_path = get_emissions_path(run_id, base_dir)
     tripinfo_path.parent.mkdir(parents=True, exist_ok=True)
     emissions_path.parent.mkdir(parents=True, exist_ok=True)
     return {

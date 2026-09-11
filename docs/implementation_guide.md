@@ -263,14 +263,14 @@ timing:
   num_seconds: 900
   delta_time: 5
   min_green: 30
+  max_green: 60
   yellow_time: 3
 
 sumo_options:
   use_gui: false
   lateral_resolution: 0.4
   additional_sumo_cmd: ""
-  tripinfo_output: outputs/tripinfo/{run_id}/tripinfo.xml
-  emission_output: outputs/tripinfo/{run_id}/emissions.xml
+  save_tripinfo: false
 
 observation_bounds:
   max_queue_per_lane: 100
@@ -488,11 +488,11 @@ sumo/additional/tls_programs.add.xml   only if supported by the real network
 sumo/cfg/*.sumocfg
 ```
 
-The SUMO configuration must write:
+The SUMCO configuration must write:
 
 ```
-outputs/tripinfo/<run_id>/tripinfo.xml
-outputs/tripinfo/<run_id>/emissions.xml
+outputs/runs/<run_id>/tripinfo/tripinfo.xml
+outputs/runs/<run_id>/tripinfo/emissions.xml
 ```
 
 SV1 must document the exact emissions XML schema and units for SV3.
@@ -552,7 +552,7 @@ The required output is an emissions dataset and a unit-conversion note for SV3. 
 
 Implementation details:
 
-- Ensure each run has unique `tripinfo` and emissions paths under `outputs/tripinfo/<run_id>/`.
+- Ensure each run has unique `tripinfo` and emissions paths under `outputs/runs/<run_id>/tripinfo/`.
 - Verify that `parse_emissions()` can distinguish `fuel`, `CO2` and `NOx` attributes from the actual SUMO output.
 - Report both total and per-completed-vehicle values when the completed vehicle count is available.
 - Do not make emissions a training reward term until the schema and units have been reviewed by SV2 and SV3.
