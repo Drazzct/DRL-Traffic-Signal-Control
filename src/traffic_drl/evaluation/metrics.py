@@ -82,7 +82,51 @@ def collect_episode_metrics(
     Returns:
         EpisodeMetrics: Typed record with normalised metric values.
     """
-    raise NotImplementedError
+    missing_primary = [m for m in PRIMARY_METRICS if m not in info]
+    if missing_primary:
+        raise ValueError(f"Missing required primary metric(s) in info mapping: {missing_primary}")
+
+    # Extract required primary metrics
+    average_waiting_time = float(info["average_waiting_time"])
+    average_queue_length = float(info["average_queue_length"])
+    time_loss = float(info["time_loss"])
+
+    # Extract constraint metrics with safe conversion and standard defaults
+    throughput = float(info.get("throughput", 0.0))
+    phase_switch_rate = float(info.get("phase_switch_rate", 0.0))
+    min_green_violations = int(info.get("min_green_violations", 0))
+
+    # Extract supplementary metrics if present
+    def _opt_float(key: str) -> float | None:
+        val = info.get(key)
+        return float(val) if val is not None else None
+
+    travel_time = _opt_float("travel_time")
+    spillback = _opt_float("spillback")
+    recovery_time = _opt_float("recovery_time")
+    fuel = _opt_float("fuel")
+    co2 = _opt_float("co2")
+    nox = _opt_float("nox")
+    inference_latency = _opt_float("inference_latency")
+
+    return EpisodeMetrics(
+        controller=controller,
+        scenario_id=scenario_id,
+        seed=seed,
+        average_waiting_time=average_waiting_time,
+        average_queue_length=average_queue_length,
+        time_loss=time_loss,
+        throughput=throughput,
+        phase_switch_rate=phase_switch_rate,
+        min_green_violations=min_green_violations,
+        travel_time=travel_time,
+        spillback=spillback,
+        recovery_time=recovery_time,
+        fuel=fuel,
+        co2=co2,
+        nox=nox,
+        inference_latency=inference_latency,
+    )
 
 
 def aggregate_metrics(
@@ -102,8 +146,16 @@ def aggregate_metrics(
     Returns:
         tuple[MetricSummary, ...]: One aggregate per (controller, scenario_id) group.
     """
-    raise NotImplementedError
+    data = [float(v) for v in values]
+    n = len(data)
+    if n == 0:
+        return (0.0, 0.0)
+    mean = sum(data) / n
+    if n == 1:
+        return (float(mean), float(mean))
 
+    variance = sum((x - mean) ** 2 for x in data) / (n - 1)
+    std_err = math.sqrt(variance) / math.sqrt(n)
 
 def confidence_interval(
     values: Iterable[float],
@@ -147,4 +199,59 @@ def interpret_results(
     Returns:
         BenchmarkReport: Aggregate summaries, improvements, and constraint violations.
     """
-    raise NotImplementedError
+    records_list = list(records)
+    summaries = aggregate_metrics(records_list)
+
+    baseline_by_scenario: dict[str, MetricSummary] = {
+        s.scenario_id: s for s in summaries if s.controller == baseline_controller
+    }
+
+    # Track constraint violations per controller
+    constraint_violations: dict[str, int] = defaultdict(int)
+    for r in records_list:
+        if r.controller not in constraint_violations:
+            constraint_violations[r.controller] = 0
+        if r.min_green_violations > 0:
+            constraint_violations[r.controller] += r.min_green_violations
+
+    improvements: dict[str, dict[str, float]] = {}
+
+    for s in summaries:
+        if s.controller == baseline_controller:
+            continue
+        base_s = baseline_by_scenario.get(s.scenario_id)
+        group_key = f"{s.controller}/{s.scenario_id}"
+        metric_improvements: dict[str, float] = {}
+
+        if base_s is not None:
+            for metric, cur_val in s.means.items():
+                base_val = base_s.means.get(metric)
+                if base_val is None:
+                    continue
+
+                if metric == "throughput":
+                    # Higher is better: positive improvement means throughput increased
+                    if base_val != 0.0:
+                        imp = (cur_val - base_val) / base_val * 100.0
+                    else:
+                        imp = 0.0
+                    # Flag throughput regression as a constraint concern
+                    if cur_val < base_val:
+                        constraint_violations[s.controller] += 1
+                else:
+                    # Delay/queue/loss/emissions: lower is better -> positive means reduced delay
+                    if base_val != 0.0:
+                        imp = (base_val - cur_val) / base_val * 100.0
+                    else:
+                        imp = 0.0
+
+                metric_improvements[metric] = float(imp)
+
+        improvements[group_key] = metric_improvements
+
+    return BenchmarkReport(
+        baseline_controller=baseline_controller,
+        summaries=summaries,
+        improvements=improvements,
+        constraint_violations=dict(constraint_violations),
+    )

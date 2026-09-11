@@ -72,6 +72,7 @@ def evaluate_controller(
         seed: Evaluation seed; used to reset the environment reproducibly.
         deterministic: Disable policy exploration during inference.
         episodes: Number of repeated episodes for this scenario/seed.
+        tripinfo_path: Optional path to SUMO tripinfo.xml file.
 
     TODO (SV3): implement the reset → predict → step loop; read metrics from
     the ``info`` dict populated by
@@ -81,8 +82,11 @@ def evaluate_controller(
     Returns:
         list[EpisodeMetrics]: One typed result per completed episode.
     """
-    raise NotImplementedError
+    results: list[EpisodeMetrics] = []
 
+    for ep in range(episodes):
+        if hasattr(model, "reset") and callable(model.reset):
+            model.reset()
 
 def evaluate_manifest(
     controller: Controller,
@@ -121,7 +125,35 @@ def evaluate_manifest(
     Returns:
         list[EpisodeMetrics]: All results across every scenario, seed, and episode.
     """
-    raise NotImplementedError
+    normalized_split = split.strip().upper()
+    if normalized_split == "TE" and not allow_te:
+        raise PermissionError(
+            "Held-out test split (TE) is locked until the model and manifest are formally frozen."
+        )
+
+    records = manifest.records_for_split(split)
+    all_metrics: list[EpisodeMetrics] = []
+    seeds_list = list(seeds)
+
+    for record in records:
+        for seed in seeds_list:
+            env = env_factory(record, seed)
+            try:
+                metrics = evaluate_controller(
+                    model,
+                    env,
+                    controller_name=controller_name,
+                    scenario_id=record.scenario_id,
+                    seed=seed,
+                    deterministic=deterministic,
+                    episodes=episodes_per_scenario,
+                )
+                all_metrics.extend(metrics)
+            finally:
+                if hasattr(env, "close") and callable(env.close):
+                    env.close()
+
+    return all_metrics
 
 
 def save_evaluation_results(
@@ -145,7 +177,27 @@ def save_evaluation_results(
     Returns:
         None.
     """
-    raise NotImplementedError
+    dest = Path(output_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    suffix = dest.suffix.lower()
+
+    records_list = list(records)
+    dict_records = [asdict(r) for r in records_list]
+
+    if suffix == ".csv":
+        fieldnames = [f.name for f in fields(EpisodeMetrics)]
+        with dest.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for r in dict_records:
+                writer.writerow(r)
+    elif suffix == ".json":
+        with dest.open("w", encoding="utf-8") as f:
+            json.dump(dict_records, f, indent=2)
+    else:
+        raise ValueError(
+            f"Unsupported output file extension: '{suffix}'. Supported formats are '.csv' and '.json'."
+        )
 
 
 def run_benchmark(
