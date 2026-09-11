@@ -1,53 +1,98 @@
-"""Fixed-time controller baseline using the same SUMO-RL route and seeds."""
+"""Fixed-time signal controller — satisfies the :class:`~traffic_drl.contracts.Controller` protocol.
+
+The fixed-time baseline runs SUMO with ``fixed_ts=True`` so the signal keeps a
+pre-programmed phase plan and never responds to traffic state.  It is evaluated
+through the same :func:`~traffic_drl.evaluation.evaluate_benchmark.evaluate_controller`
+path as every other controller.
+
+Typical usage
+-------------
+::
+
+    from traffic_drl.baselines.fixed_time import FixedTimeController, make_fixed_time_env
+    from traffic_drl.evaluation.evaluate_benchmark import evaluate_controller
+
+    controller = FixedTimeController()
+    env = make_fixed_time_env(record, config)
+    metrics = evaluate_controller(controller, env, controller_name="fixed_time",
+                                  scenario_id=record.scenario_id, seed=record.sumo_seed)
+"""
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Iterable
+import numpy as np
+import gymnasium as gym
 
-from traffic_drl.contracts import EpisodeMetrics
+from traffic_drl.contracts import ScenarioRecord
+from traffic_drl.config import EnvConfig
 
 
-def create_fixed_time_environment(config: Any, route_file: str | Path, *, seed: int | None = None, use_gui: bool = False) -> Any:
-    """Create a fixed-time SUMO-RL environment.
+class FixedTimeController:
+    """Controller stub for the fixed-time (pre-timed) signal baseline.
 
-    Args:
-        config: Network and timing configuration shared with DRL evaluation.
-        route_file: SUMO ``.rou.xml`` with ``<route>`` and ``<vehicle>`` elements;
-            validate it with SUMO's route parser.
-        seed: Same seed used by the competing controller.
-        use_gui: Whether to launch SUMO-GUI.
+    The fixed-time plan is encoded in the SUMO network/additional files and
+    executed by SUMO when ``fixed_ts=True`` is passed to the SUMO-RL
+    environment.  ``predict`` is called at each control step but must always
+    return the **current** phase (no switching) so the environment's
+    ``fixed_ts`` logic takes over.
 
-    TODO (SV3): confirm ``fixed_ts=True`` and identical route/seed inputs.
+    Satisfies the :class:`~traffic_drl.contracts.Controller` protocol.
 
-    Returns:
-        Any: A SUMO-RL environment configured for fixed-time control.
+    TODO (SV3): confirm ``fixed_ts=True`` passes through SUMO-RL correctly and
+    that the returned action is the identity action for the environment.
     """
-    raise NotImplementedError
+
+    def predict(
+        self,
+        observation: np.ndarray,
+        *,
+        deterministic: bool = True,
+    ) -> int:
+        """Return the identity (no-switch) action for the current phase.
+
+        Under ``fixed_ts=True`` SUMO-RL ignores the agent action and advances
+        the pre-programmed signal plan automatically.  This method exists only
+        to satisfy the :class:`~traffic_drl.contracts.Controller` interface so
+        that the unified evaluation loop can treat fixed-time like any other
+        controller.
+
+        Args:
+            observation: Current observation vector (ignored).
+            deterministic: Unused; kept for interface compatibility.
+
+        TODO (SV3): verify the correct identity action value for the
+        single-intersection environment.
+
+        Returns:
+            int: The identity action (phase hold); value is environment-specific.
+        """
+        raise NotImplementedError
+
+    def reset(self) -> None:
+        """No internal state to reset for fixed-time control.
+
+        Returns:
+            None.
+        """
+        # Fixed-time has no learned or accumulated state.
+        pass
 
 
-def run_fixed_time_episode(env: Any, *, seed: int | None = None) -> EpisodeMetrics:
-    """Run one fixed-time episode and return typed metrics.
+def make_fixed_time_env(record: ScenarioRecord, config: EnvConfig) -> gym.Env:
+    """Create a SUMO-RL environment configured for fixed-time control.
+
+    Passes ``fixed_ts=True`` to the SUMO-RL constructor so that SUMO executes
+    the pre-programmed signal plan from the network/additional files.  The
+    route file and seeds are taken from *record* to ensure the same traffic
+    demand is used across all baselines.
 
     Args:
-        env: Fixed-time SUMO-RL environment.
-        seed: Seed used when resetting the environment.
+        record: Scenario record providing the route file and seeds.
+        config: Shared environment configuration (network, timing, SUMO options).
+
+    TODO (SV3): map ``config`` fields to the SUMO-RL constructor and confirm
+    that ``fixed_ts=True`` disables agent control correctly.
 
     Returns:
-        EpisodeMetrics: Typed traffic/control metrics for the episode.
-    """
-    raise NotImplementedError
-
-
-def evaluate_fixed_time(config: Any, route_files: Iterable[str | Path], *, seeds: Iterable[int], output_path: str | Path | None = None) -> list[EpisodeMetrics]:
-    """Evaluate the fixed-time baseline over routes and matched seeds.
-
-    Args:
-        config: Shared environment configuration.
-        route_files: SUMO ``.rou.xml`` files containing route/vehicle definitions.
-        seeds: Reproducibility seeds shared with other controllers.
-        output_path: Optional UTF-8 CSV/JSON destination for ``EpisodeMetrics``.
-
-    Returns:
-        list[EpisodeMetrics]: Results for every route and matched seed.
+        gym.Env: A Gymnasium-compatible SUMO-RL environment in fixed-time mode.
     """
     raise NotImplementedError
