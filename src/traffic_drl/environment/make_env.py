@@ -23,14 +23,17 @@ Typical usage
     config = load_env_config("configs/environment/dev_single_intersection.yaml")
     env = create_sumo_env(config, route_file="scenarios/TR-01.rou.xml", seed=42)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
-
+from typing import Literal, Sequence, Callable
 import gymnasium as gym
-
 from traffic_drl.config import EnvConfig, load_env_config
-
+from traffic_drl.environment import wrap_environment
+from traffic_drl.environment.custom_observations import MixedTrafficObservation
+from traffic_drl.train.scenario_sampler import ScenarioSampler
+import traffic_drl.run_id as r_id
 
 # Type aliases for SB3 vectorised environments.  We use strings here so the
 # module can be imported even when stable-baselines3 is not installed.
@@ -46,11 +49,19 @@ except ModuleNotFoundError:
 def create_sumo_env(
     config: EnvConfig | str | Path,
     route_file: str | Path,
+    run_id: str,
+    base_dir: Path,
     *,
     fixed_ts: bool = False,
     seed: int | None = None,
     use_gui: bool = False,
-    reward_fn: str = "pressure",
+    reward_fn: str | Callable = "pressure",
+    wrap: bool = False,
+    scenario_sampler: ScenarioSampler = None,
+    custom_observation: bool = True,
+    approach_ids: Sequence[str] = (),
+    ring_segment_ids: Sequence[str] = (),
+    vehicle_classes: Sequence[str] = ("passenger", "bus", "truck"),
 ) -> gym.Env:
     """Create a single-agent SUMO-RL Gymnasium environment for one route.
 
@@ -63,6 +74,8 @@ def create_sumo_env(
         route_file: Exactly **one** ``.rou.xml`` route file.  Must not be a
             comma-joined multi-route string; SUMO-RL handles multi-route via
             the manifest + wrapper, not via concatenation.
+        run_id: The id of the specific run
+        base_dir: The base run directory
         fixed_ts: Run the pre-timed signal plan instead of agent control.
             Pass ``True`` when creating the fixed-time baseline environment.
         seed: Reproducibility seed for SUMO demand and behaviour.
@@ -70,6 +83,12 @@ def create_sumo_env(
         reward_fn: Reward function name accepted by SUMO-RL (e.g. ``"pressure"``
             or ``"queue"``).  Custom reward functions should be registered with
             SUMO-RL before calling this factory.
+        wrap: Whether to wrap the environment with multi-scenario logic.
+        scenario_sampler: Active scenario sampler to use if ``wrap`` is True.
+        custom_observation: Whether to inject the custom MDP observation space.
+        approach_ids: List of incoming edge IDs for observation space grouping.
+        ring_segment_ids: List of roundabout ring edges for density calculations.
+        vehicle_classes: List of vehicle classes to track for PCU metrics.
 
     Output contract: the runner must create ``outputs/tripinfo/<run_id>/`` and
     pass SUMO's ``--tripinfo-output`` and ``--emission-output`` paths via
@@ -87,7 +106,70 @@ def create_sumo_env(
     if isinstance(config, (str, Path)):
         config = load_env_config(config)
 
-    raise NotImplementedError
+    # 1. Validation checks
+    if "," in str(route_file):
+        raise ValueError(
+            f"route_file must be a single file, not a comma-joined multi-route value: {route_file}"
+        )
+    
+    if not Path(config.network.net_file).exists():
+        raise FileNotFoundError(f"SUMO network file not found: {config.network.net_file}")
+        
+    if not Path(route_file).exists():
+        raise FileNotFoundError(f"SUMO route file not found: {route_file}")
+
+    additional_cmd = [
+        config.sumo_options.additional_sumo_cmd,
+        "--lateral-resolution",
+        str(config.sumo_options.lateral_resolution),
+    ]
+
+    # Create directories before assigning paths
+    tripinfo_dir, results_dir, _, _ = r_id.ensure_run_directories(run_id, base_dir)
+
+    if config.sumo_options.save_tripinfo:
+        tripinfo_path = tripinfo_dir / "tripinfo.xml"
+        emissions_path = tripinfo_dir / "emissions.xml"
+        additional_cmd.append("--tripinfo-output")
+        additional_cmd.append(str(tripinfo_path))
+        additional_cmd.append("--emission-output")
+        additional_cmd.append(str(emissions_path))
+
+    cmds = " ".join(additional_cmd)
+    
+    env_kwargs = dict(
+        id="sumo-rl-v0",
+        net_file=config.network.net_file,
+        route_file=str(route_file),
+        out_csv_name=str(results_dir / "run_csv"),
+        use_gui=use_gui,
+        num_seconds=config.timing.num_seconds,
+        min_green=config.timing.min_green,
+        max_green=config.timing.max_green,
+        delta_time=config.timing.delta_time,
+        yellow_time=config.timing.yellow_time,
+        sumo_seed=seed if seed is not None else "random",
+        ts_ids=[config.traffic_light.ts_id],
+        fixed_ts=fixed_ts,
+        reward_fn=reward_fn,
+        single_agent=config.traffic_light.single_agent,
+        additional_sumo_cmd=cmds,
+    )
+    
+    if custom_observation:
+        env_kwargs["observation_class"] = lambda ts: MixedTrafficObservation(
+            ts, 
+            approach_ids=approach_ids, 
+            ring_segment_ids=ring_segment_ids, 
+            vehicle_classes=vehicle_classes
+        )
+
+    env = gym.make(**env_kwargs)
+
+    if wrap:
+        env = wrap_environment(env, scenario_sampler)
+
+    return env
 
 
 def make_dev_environment(
@@ -115,16 +197,54 @@ def make_dev_environment(
     if isinstance(config, (str, Path)):
         config = load_env_config(config)
 
-    raise NotImplementedError
+    from traffic_drl.environment.scenario_factory import ScenarioManifest
+    
+    # Load the DEV-00 manifest record for the smoke test
+    manifest = ScenarioManifest.from_csv("scenarios/scenario_manifest.csv")
+    record = manifest.get("DEV-00")
+
+    env = create_sumo_env(
+        config=config,
+        route_file=record.route_file,
+        run_id="DEV-00-SMOKE",
+        base_dir=Path("outputs/runs"),
+        seed=seed,
+        use_gui=use_gui,
+    )
+
+    # 2. Run SB3 compliance checks
+    try:
+        from stable_baselines3.common.env_checker import check_env
+        check_env(env, warn=True)
+    except ImportError:
+        pass
+
+    return env
 
 
 def make_vectorized_environment(
     config: EnvConfig | str | Path,
     route_file: str | Path,
+    run_id: str,
+    base_dir: Path,
     *,
-    normalize_observations: bool = True,
-    normalize_rewards: bool = False,
+    fixed_ts: bool = False,
     seed: int | None = None,
+    use_gui: bool = False,
+    reward_fn: str | Callable = "pressure",
+    wrap: bool = False,
+    scenario_sampler: ScenarioSampler = None,
+    custom_observation: bool = True,
+    training: bool = True,
+    norm_obs: bool = True,
+    norm_reward: bool = True,
+    clip_obs: float = 10.0,
+    clip_reward: float = 10.0,
+    approach_ids: Sequence[str] = (),
+    ring_segment_ids: Sequence[str] = (),
+    vehicle_classes: Sequence[str] = ("passenger", "bus", "truck"),
+    vec_normalize: str | Path | None = None,
+    **kwargs,
 ) -> "DummyVecEnv | VecNormalize":
     """Create a ``DummyVecEnv`` and optional ``VecNormalize`` wrapper for SB3.
 
@@ -134,10 +254,25 @@ def make_vectorized_environment(
     Args:
         config: Typed environment configuration or path to its YAML file.
         route_file: One route XML file selected from the training split.
-        normalize_observations: Wrap with ``VecNormalize`` and fit running
-            statistics on training data only.
-        normalize_rewards: Enable reward normalisation during training.
+        run_id: The unique identifier for this run, used for output paths.
+        base_dir: The root output directory for training artifacts.
+        fixed_ts: If True, uses the pre-timed signal plan instead of agent control.
         seed: Seed forwarded to the underlying SUMO-RL environment.
+        use_gui: Whether to launch sumo-gui instead of headless sumo.
+        reward_fn: The reward function identifier or callable.
+        wrap: Whether to wrap the base SUMO-RL env with ScenarioSampler logic.
+        scenario_sampler: The scenario sampler to use if wrap is True.
+        custom_observation: Whether to inject the custom MDP observation space.
+        training: True if training, False if evaluating. Used by VecNormalize.
+        norm_obs: Wrap with ``VecNormalize`` and normalise observations.
+        norm_reward: Wrap with ``VecNormalize`` and normalise rewards.
+        clip_obs: Maximum absolute value for normalised observations.
+        clip_reward: Maximum absolute value for normalised rewards.
+        approach_ids: Incoming edge IDs passed to the custom observation space.
+        ring_segment_ids: Ring edges passed to the custom observation space.
+        vehicle_classes: Vehicle classes to track in custom observations.
+        vec_normalize: Optional path to a saved ``VecNormalize`` file to load.
+        **kwargs: Extra parameters passed to :func:`create_sumo_env`.
 
     TODO (SV2): fit ``VecNormalize`` only on ``TR`` episodes and freeze it
     (``training=False``, ``norm_reward=False``) for ``VA``/``TE`` evaluation.
@@ -149,7 +284,43 @@ def make_vectorized_environment(
     if isinstance(config, (str, Path)):
         config = load_env_config(config)
 
-    raise NotImplementedError
+    def _make_env():
+        return create_sumo_env(
+            config,
+            route_file,
+            run_id=run_id,
+            base_dir=base_dir,
+            fixed_ts=fixed_ts,
+            use_gui=use_gui,
+            reward_fn=reward_fn,
+            wrap=wrap,
+            scenario_sampler=scenario_sampler,
+            custom_observation=custom_observation,
+            seed=seed,
+            approach_ids=approach_ids,
+            ring_segment_ids=ring_segment_ids,
+            vehicle_classes=vehicle_classes,
+            **kwargs,
+        )
+
+    env = DummyVecEnv([_make_env])
+
+
+    if vec_normalize is not None:
+        env = VecNormalize.load(str(vec_normalize), env)
+        env.training = training
+        env.norm_reward = norm_reward
+    elif norm_obs or norm_reward:
+        env = VecNormalize(
+            env,
+            training=training,
+            norm_obs=norm_obs,
+            norm_reward=norm_reward,
+            clip_obs=clip_obs,
+            clip_reward=clip_reward,
+        )
+
+    return env
 
 
 def close_environment(env: gym.Env) -> None:
@@ -162,10 +333,5 @@ def close_environment(env: gym.Env) -> None:
     Args:
         env: Any Gymnasium, vectorised, or wrapped SUMO-RL environment.
 
-    TODO (SV1): verify that ``VecNormalize`` / ``DummyVecEnv`` correctly
-    propagate ``close()`` to the inner SUMO-RL environment.
-
-    Returns:
-        None.
     """
-    raise NotImplementedError
+    env.close()
