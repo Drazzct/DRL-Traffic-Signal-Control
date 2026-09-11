@@ -1,11 +1,16 @@
-﻿# Traffic DRL Project
+# Traffic DRL Project
 
 This repository scaffolds the SUMO-RL and Stable-Baselines3 pipeline for mixed-traffic signal control.
 
-Start with:
+## Documentation
 
-- [Interfaces and file formats](docs/interfaces_and_formats.md): shared contracts, ownership, schemas, parsing rules, and checkpoint lifecycle.
-- [Configuration formats](docs/config_formats.md): YAML configuration templates.
-- [MDP description](docs/mdp_descriptions.md): state, action, reward, and episode design.
+Start with the following implementation and architecture guides:
 
-The network, route, configuration, and SUMO additional resources are added separately. Python modules currently define the implementation interfaces and may contain deferred `NotImplementedError` bodies.
+- [Architecture](docs/ARCHITECTURE.md): An overview of the module boundaries, shared contracts (`Controller` protocol), configuration management, and development roles.
+- [Implementation Tasks](docs/IMPLEMENTATION_TASKS.md): The concrete, checklist-style assignment of remaining tasks for SV1, SV2, and SV3 to complete the pipeline.
+- [Data and Configuration](docs/DATA_AND_CONFIG.md): The single source of truth for the YAML configuration schemas, directory layout, and CSV scenario manifest parsing.
+- [MDP Design](docs/MDP_DESIGN.md): The formal definitions of state, action, and reward terms for the reinforcement learning environment.
+
+## Quick Start
+
+The network, route, configuration, and SUMO additional resources are added separately under `sumo/` and `scenarios/`. Python modules in `src/traffic_drl/` currently define the implementation interfaces and may contain deferred `NotImplementedError` bodies. Check the `TODO (SVx)` tags in the codebase to see exactly what remains to be implemented for your specific role.

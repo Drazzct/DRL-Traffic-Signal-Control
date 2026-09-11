@@ -1,0 +1,22 @@
+network:
+  net_file: sumo/net/<network>.net.xml
+  route_files: []
+  additional_files:
+    - sumo/additional/<vehicle_types>.add.xml
+traffic_light:
+  ts_id: <validated_tls_id>
+  single_agent: true
+timing:
+  num_seconds: 900
+  delta_time: 5
+  min_green: 30
+  max_green: 60
+  yellow_time: 3
+sumo_options:
+  use_gui: false
+  lateral_resolution: 1.2
+  additional_sumo_cmd: ""
+  save_tripinfo: false
+observation_bounds:
+  max_queue_per_lane: 100.0
+  max_time_in_phase: 900.0
