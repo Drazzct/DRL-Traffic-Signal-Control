@@ -35,7 +35,7 @@ def test_run_id():
     print(f"  Generated run ID: {run_id}")
 
     # Ensure directories exist
-    tripinfo_dir, results_dir = ensure_run_directories(run_id)
+    tripinfo_dir, results_dir, *_ = ensure_run_directories(run_id)
     print(f"  Tripinfo directory: {tripinfo_dir}")
     print(f"  Results directory: {results_dir}")
 

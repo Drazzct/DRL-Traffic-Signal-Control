@@ -129,34 +129,6 @@ def collect_episode_metrics(
     )
 
 
-def aggregate_metrics(
-    records: Iterable[EpisodeMetrics],
-) -> tuple[MetricSummary, ...]:
-    """Aggregate per-episode records by (controller, scenario_id) group.
-
-    For each group, computes mean, standard deviation, and 95% confidence
-    interval for every metric in :func:`standard_metric_names`.
-
-    Args:
-        records: Typed episode results collected with matched scenario/seed
-            settings across all controllers.
-
-    TODO (SV3): report mean, standard deviation, and 95% CI.
-
-    Returns:
-        tuple[MetricSummary, ...]: One aggregate per (controller, scenario_id) group.
-    """
-    data = [float(v) for v in values]
-    n = len(data)
-    if n == 0:
-        return (0.0, 0.0)
-    mean = sum(data) / n
-    if n == 1:
-        return (float(mean), float(mean))
-
-    variance = sum((x - mean) ** 2 for x in data) / (n - 1)
-    std_err = math.sqrt(variance) / math.sqrt(n)
-
 def confidence_interval(
     values: Iterable[float],
     confidence: float = 0.95,
@@ -172,10 +144,84 @@ def confidence_interval(
 
     Returns:
         tuple[float, float]: ``(lower, upper)`` confidence bounds.
-
-    Raises:
-        ValueError: If fewer than two values are provided.
     """
+    data = [float(v) for v in values]
+    n = len(data)
+    if n == 0:
+        return (0.0, 0.0)
+    mean_val = sum(data) / n
+    if n == 1:
+        return (float(mean_val), float(mean_val))
+
+    variance = sum((x - mean_val) ** 2 for x in data) / (n - 1)
+    std_err = math.sqrt(variance) / math.sqrt(n)
+
+    try:
+        from scipy import stats
+
+        t_crit = float(stats.t.ppf((1.0 + confidence) / 2.0, df=n - 1))
+    except Exception:
+        # Analytical approximation fallback
+        t_crit = 1.96 if abs(confidence - 0.95) < 1e-4 else 2.0
+
+    margin = t_crit * std_err
+    return (float(mean_val - margin), float(mean_val + margin))
+
+
+def aggregate_metrics(
+    records: Iterable[EpisodeMetrics],
+) -> tuple[MetricSummary, ...]:
+    """Aggregate per-episode records by (controller, scenario_id) group.
+
+    For each group, computes mean, standard deviation, and 95% confidence
+    interval for every metric in :func:`standard_metric_names`.
+
+    Args:
+        records: Typed episode results collected with matched scenario/seed
+            settings across all controllers.
+
+    Returns:
+        tuple[MetricSummary, ...]: One aggregate per (controller, scenario_id) group.
+    """
+    groups: dict[tuple[str, str], list[EpisodeMetrics]] = defaultdict(list)
+    for r in records:
+        groups[(r.controller, r.scenario_id)].append(r)
+
+    all_metric_keys = standard_metric_names()
+    summaries: list[MetricSummary] = []
+
+    for (controller, scenario_id), recs in groups.items():
+        sample_count = len(recs)
+        means: dict[str, float] = {}
+        standard_deviations: dict[str, float] = {}
+        confidence_intervals: dict[str, tuple[float, float]] = {}
+
+        for key in all_metric_keys:
+            vals = [getattr(r, key) for r in recs if getattr(r, key, None) is not None]
+            if not vals:
+                continue
+            float_vals = [float(v) for v in vals]
+            m = sum(float_vals) / len(float_vals)
+            means[key] = float(m)
+            if len(float_vals) > 1:
+                var = sum((x - m) ** 2 for x in float_vals) / (len(float_vals) - 1)
+                standard_deviations[key] = math.sqrt(var)
+            else:
+                standard_deviations[key] = 0.0
+            confidence_intervals[key] = confidence_interval(float_vals, confidence=0.95)
+
+        summaries.append(
+            MetricSummary(
+                controller=controller,
+                scenario_id=scenario_id,
+                sample_count=sample_count,
+                means=means,
+                standard_deviations=standard_deviations,
+                confidence_intervals=confidence_intervals,
+            )
+        )
+
+    return tuple(summaries)
 
 
 def interpret_results(

@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import gymnasium as gym
+import numpy as np
 import pytest
 
 from traffic_drl.contracts import (
@@ -29,6 +31,7 @@ from traffic_drl.evaluation import (
     plot_learning_curve,
     plot_metric_comparison,
     plot_queue_heatmap,
+    run_benchmark,
     run_smoke_test,
     save_evaluation_results,
     standard_metric_names,
@@ -271,22 +274,27 @@ def test_merge_tripinfo_metrics(tmp_path: Path) -> None:
 # ==========================================
 
 
-class MockSpace:
-    def sample(self) -> int:
-        return 0
-
-
-class MockGymEnv:
+class MockGymEnv(gym.Env):
     def __init__(self, max_steps: int = 5) -> None:
+        super().__init__()
         self.max_steps = max_steps
         self.step_count = 0
-        self.action_space = MockSpace()
-        self.observation_space = MockSpace()
+        self.action_space = gym.spaces.Discrete(2)
+        self.observation_space = gym.spaces.Box(
+            low=0.0, high=1.0, shape=(4,), dtype=np.float32
+        )
         self.is_closed = False
 
-    def reset(self, *, seed: int | None = None) -> tuple[int, dict[str, Any]]:
+    def reset(
+        self,
+        *,
+        seed: int | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        super().reset(seed=seed)
         self.step_count = 0
-        return 0, {
+        obs = np.zeros(4, dtype=np.float32)
+        return obs, {
             "average_waiting_time": 5.0,
             "average_queue_length": 2.0,
             "time_loss": 10.0,
@@ -294,9 +302,10 @@ class MockGymEnv:
             "min_green_violations": 0,
         }
 
-    def step(self, action: Any) -> tuple[int, float, bool, bool, dict[str, Any]]:
+    def step(self, action: Any) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         self.step_count += 1
-        done = self.step_count >= self.max_steps
+        terminated = self.step_count >= self.max_steps
+        truncated = False
         info = {
             "average_waiting_time": 5.0 + self.step_count,
             "average_queue_length": 2.0,
@@ -304,7 +313,8 @@ class MockGymEnv:
             "throughput": 80.0,
             "min_green_violations": 0,
         }
-        return 0, 1.0, done, False, info
+        obs = np.zeros(4, dtype=np.float32)
+        return obs, 1.0, terminated, truncated, info
 
     def close(self) -> None:
         self.is_closed = True
@@ -527,3 +537,69 @@ def test_run_smoke_test() -> None:
     assert result.terminated is True
     assert len(result.rewards) == 4
     assert env.is_closed is True
+
+
+def test_run_benchmark(tmp_path: Path) -> None:
+    """Run benchmark with mock manifest, env factory, and controllers."""
+    from traffic_drl.config import (
+        ArtifactsConfig,
+        BenchmarkConfig,
+        EvalConfig,
+        EvalNormalisationConfig,
+        ReportingConfig,
+    )
+    from traffic_drl.contracts import BenchmarkReport
+
+    cfg = EvalConfig(
+        benchmark=BenchmarkConfig(
+            name="test_bench",
+            split="VA",
+            deterministic=True,
+            episodes_per_scenario=1,
+        ),
+        env_config_path="configs/environment/dev_single_intersection.yaml",
+        manifest_path="dummy.csv",
+        checksum_file="dummy.sha256",
+        evaluation_seeds=[42],
+        scenarios=["VA-01"],
+        artifacts=ArtifactsConfig(
+            model_checkpoint="",
+            vec_normalize_stats="",
+        ),
+        normalisation=EvalNormalisationConfig(
+            training=False,
+            norm_reward=False,
+        ),
+        reporting=ReportingConfig(
+            output_dir=str(tmp_path / "benchmark_out"),
+            save_tripinfo=False,
+        ),
+    )
+
+    records = [
+        ScenarioRecord(
+            scenario_id="VA-01",
+            split="VA",
+            route_file=Path("dummy_va.rou.xml"),
+            demand_seed=1,
+            sumo_seed=1,
+            num_seconds=100,
+        ),
+    ]
+    manifest = MockManifest(records)
+    env_factory = lambda rec, seed: MockGymEnv(max_steps=3)
+    controllers = {"fixed_time": MockController(), "test_ctrl": MockController()}
+
+    report = run_benchmark(
+        config=cfg,
+        scenario_source=manifest,
+        env_factory=env_factory,
+        controllers=controllers,
+    )
+
+    assert isinstance(report, BenchmarkReport)
+    assert report.baseline_controller == "fixed_time"
+    assert len(report.summaries) == 2
+    assert (tmp_path / "benchmark_out" / "metrics.csv").exists()
+    assert (tmp_path / "benchmark_out" / "metrics.json").exists()
+

@@ -37,6 +37,11 @@ from traffic_drl.evaluation.parse_tripinfo import (
     parse_emissions,
     merge_tripinfo_metrics,
 )
+from traffic_drl.evaluation.plots import (
+    plot_metric_comparison,
+    plot_learning_curve,
+    plot_queue_heatmap,
+)
 from traffic_drl.evaluation.test import check_environment, run_smoke_test
 
 __all__ = [
@@ -58,6 +63,10 @@ __all__ = [
     "parse_tripinfo",
     "parse_emissions",
     "merge_tripinfo_metrics",
+    # plots
+    "plot_metric_comparison",
+    "plot_learning_curve",
+    "plot_queue_heatmap",
     # test
     "check_environment",
     "run_smoke_test",

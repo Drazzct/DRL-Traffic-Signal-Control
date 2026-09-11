@@ -7,9 +7,31 @@ not display interactively.  Select the output format from the file suffix of
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from typing import Any
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pandas as pd
 
 from traffic_drl.contracts import EpisodeMetrics
+
+
+def _to_dataframe(records: Iterable[EpisodeMetrics | dict[str, Any]]) -> pd.DataFrame:
+    """Convert an iterable of EpisodeMetrics or dicts into a pandas DataFrame."""
+    rows: list[dict[str, Any]] = []
+    for r in records:
+        if is_dataclass(r):
+            rows.append(asdict(r))
+        elif isinstance(r, dict):
+            rows.append(dict(r))
+        elif hasattr(r, "__dict__"):
+            rows.append(dict(vars(r)))
+        else:
+            rows.append(r)
+    return pd.DataFrame(rows)
 
 
 def plot_metric_comparison(

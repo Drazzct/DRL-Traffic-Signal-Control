@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+import numpy as np
 
 # Ensure src/ is in sys.path automatically so traffic_drl can always be imported
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -19,6 +20,12 @@ from traffic_drl.evaluation import (
     parse_tripinfo,
     plot_metric_comparison,
     save_evaluation_results,
+)
+from traffic_drl.run_id import (
+    ensure_run_directories,
+    generate_run_id,
+    get_emissions_path,
+    get_tripinfo_path,
 )
 
 
@@ -61,6 +68,11 @@ def parse_args() -> argparse.Namespace:
         help="Path to trained Stable-Baselines3 model checkpoint (.zip).",
     )
     parser.add_argument(
+        "--vec-normalize",
+        type=Path,
+        help="Path to VecNormalize statistics file (.pkl) for normalizing observations.",
+    )
+    parser.add_argument(
         "--num-seconds",
         type=int,
         default=1000,
@@ -82,6 +94,12 @@ def parse_args() -> argparse.Namespace:
         "--gui",
         action="store_true",
         help="Launch SUMO-GUI visualization window instead of headless SUMO.",
+    )
+    parser.add_argument(
+        "--delay",
+        type=int,
+        default=50,
+        help="Step delay in milliseconds for SUMO-GUI (default: 50ms so vehicles move visibly).",
     )
 
     # Output paths
@@ -165,14 +183,16 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Configure tripinfo and emissions output directory
-    run_id = f"eval_{args.controller}_{args.seed}"
-    tripinfo_dir = Path("outputs/tripinfo") / run_id
-    tripinfo_dir.mkdir(parents=True, exist_ok=True)
-    tripinfo_xml = tripinfo_dir / "tripinfo.xml"
-    emissions_xml = tripinfo_dir / "emissions.xml"
+    run_id = generate_run_id(prefix=f"eval_{args.controller}", run_type="test")
+    tripinfo_dir, results_dir, *_ = ensure_run_directories(run_id)
+    tripinfo_xml = get_tripinfo_path(run_id)
+    emissions_xml = get_emissions_path(run_id)
 
+    gui_options = f" --delay {args.delay}" if (args.gui and args.delay > 0) else ""
     additional_sumo_cmd = (
-        f"--tripinfo-output {tripinfo_xml.as_posix()} --emission-output {emissions_xml.as_posix()}"
+        f"--tripinfo-output {tripinfo_xml.as_posix()} "
+        f"--emission-output {emissions_xml.as_posix()} "
+        f"--no-step-log true --duration-log.disable true --no-warnings true{gui_options}"
     )
 
     print(f"[+] Initializing SUMO-RL (duration: {args.num_seconds}s, GUI: {args.gui})...")
@@ -196,13 +216,74 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
     if args.model_path and args.model_path.exists():
         print(f"[+] Loading SB3 model from {args.model_path}...")
         try:
-            from stable_baselines3 import DQN
+            from stable_baselines3 import PPO, DQN
 
-            model = DQN.load(str(args.model_path))
-            controller_name = args.controller or "drl_model"
+            model_name_lower = args.model_path.name.lower()
+            if "ppo" in model_name_lower:
+                sb3_model = PPO.load(str(args.model_path))
+                default_name = "ppo_agent"
+            elif "dqn" in model_name_lower:
+                sb3_model = DQN.load(str(args.model_path))
+                default_name = "dqn_agent"
+            else:
+                try:
+                    sb3_model = PPO.load(str(args.model_path))
+                    default_name = "ppo_agent"
+                except Exception:
+                    sb3_model = DQN.load(str(args.model_path))
+                    default_name = "dqn_agent"
+
+            controller_name = (
+                args.controller if args.controller != "fixed_time" else default_name
+            )
+            print(f"[+] Successfully loaded {type(sb3_model).__name__} model.")
         except Exception as exc:
             print(f"Error loading model: {exc}", file=sys.stderr)
             sys.exit(1)
+
+        # Optional VecNormalize
+        vec_norm = None
+        if args.vec_normalize:
+            if not args.vec_normalize.exists():
+                print(f"Error: VecNormalize file '{args.vec_normalize}' not found.", file=sys.stderr)
+                sys.exit(1)
+            print(f"[+] Loading VecNormalize statistics from {args.vec_normalize}...")
+            try:
+                from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+
+                dummy_venv = DummyVecEnv([lambda: env])
+                vec_norm = VecNormalize.load(str(args.vec_normalize), dummy_venv)
+                # Crucial: Freeze normalization stats and disable reward norm during evaluation
+                vec_norm.training = False
+                vec_norm.norm_reward = False
+                print("[+] VecNormalize statistics loaded and frozen (training=False, norm_reward=False).")
+            except Exception as exc:
+                print(f"Error loading VecNormalize: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+        class DRLControllerWrapper:
+            """Adapter wrapping SB3 model with optional VecNormalize for evaluate_controller."""
+
+            def __init__(self, raw_model, normalizer=None):
+                self.raw_model = raw_model
+                self.normalizer = normalizer
+
+            def predict(self, obs, deterministic: bool = True):
+                if self.normalizer is not None:
+                    obs = self.normalizer.normalize_obs(obs)
+                action, _ = self.raw_model.predict(obs, deterministic=deterministic)
+                if isinstance(action, np.ndarray):
+                    if action.ndim == 0:
+                        return int(action)
+                    elif action.size == 1:
+                        return int(action.item())
+                return action
+
+            def reset(self):
+                if hasattr(self.raw_model, "reset"):
+                    self.raw_model.reset()
+
+        model = DRLControllerWrapper(sb3_model, normalizer=vec_norm)
     else:
         controller_name = args.controller
 
@@ -218,7 +299,7 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
     scenario_id = args.rou.stem
     print(f"[+] Running evaluation ({args.episodes} episode(s))...")
     records = evaluate_controller(
-        model=model,
+        controller=model,
         env=env,
         controller_name=controller_name,
         scenario_id=scenario_id,
