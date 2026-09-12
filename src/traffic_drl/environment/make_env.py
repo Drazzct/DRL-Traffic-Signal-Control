@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Literal, Sequence, Callable
 import gymnasium as gym
 from traffic_drl.config import EnvConfig, load_env_config
-from traffic_drl.environment import wrap_environment
+from traffic_drl.environment.wrappers import wrap_environment
 from traffic_drl.environment.custom_observations import MixedTrafficObservation
 from traffic_drl.train.scenario_sampler import ScenarioSampler
 import traffic_drl.run_id as r_id

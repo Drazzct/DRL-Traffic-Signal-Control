@@ -30,6 +30,16 @@ PCU_MAP = {
     "emergency": 1.0,
 }
 
+Q_MAX_BY_CLASS = {
+    "passenger": 15.0,
+    "bus": 3.0,
+    "truck": 2.0,
+    "motorcycle": 75.0,
+    "emergency": 2.0,
+}
+Q_MAX = Q_MAX_BY_CLASS["passenger"]
+METERS_PER_PCU = 5
+
 
 class MixedTrafficObservation(ObservationFunction):
     """SUMO-RL observation function for queue, density, speed, and phase data.
@@ -87,8 +97,6 @@ class MixedTrafficObservation(ObservationFunction):
         observation = []
         
         # Constants from MDP_DESIGN.md
-        Q_max = 50.0  # Halting vehicle threshold
-        METERS_PER_PCU = 7.5  # Approx spacing per PCU to estimate capacity
 
         # 1. Inbound approach: f_inbound (N * (1 + C))
         for approach_id in self.approach_ids:
@@ -122,7 +130,7 @@ class MixedTrafficObservation(ObservationFunction):
             
             # Feature 2: Queue Vector (q_i) across C classes
             for c in self.vehicle_classes:
-                q_ratio = min(1.0, queue_by_class[c] / Q_max)
+                q_ratio = min(1.0, queue_by_class[c] / Q_MAX_BY_CLASS.get(c, Q_MAX_BY_CLASS["passenger"]))
                 observation.append(q_ratio)
 
         # 2. Ring segments: f_circulatory (M)
