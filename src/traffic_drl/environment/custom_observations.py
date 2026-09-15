@@ -75,17 +75,27 @@ class MixedTrafficObservation(ObservationFunction):
             include_elapsed_time: Append elapsed phase time as the final feature.
         """
         super().__init__(ts)
-        super().__init__(ts)
         self.approach_ids = tuple(approach_ids)
         self.ring_segment_ids = tuple(ring_segment_ids)
         self.vehicle_classes = tuple(vehicle_classes)
-        
-        # Dimensions N, M, C, K from MDP_DESIGN.md
+
+        # Dimensions N, M, C are fixed at construction time from the provided IDs.
+        # K (num_green_phases) and max_green are read lazily via properties because
+        # TrafficSignal.__init__ instantiates the observation class BEFORE calling
+        # _build_phases(), so num_green_phases is not yet set on the ts object.
         self.N = len(self.approach_ids)
         self.M = len(self.ring_segment_ids)
         self.C = len(self.vehicle_classes)
-        self.K = self.ts.num_green_phases
-        self.max_green = self.ts.max_green
+
+    @property
+    def K(self) -> int:
+        """Number of green phases -- read lazily so _build_phases() has time to run."""
+        return self.ts.num_green_phases
+
+    @property
+    def max_green(self) -> int:
+        """Max green time -- read lazily for the same reason as K."""
+        return self.ts.max_green
         
     def __call__(self) -> np.ndarray:
         """Return the ordered observation vector consumed by an SB3 policy.

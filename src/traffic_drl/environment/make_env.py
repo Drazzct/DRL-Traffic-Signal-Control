@@ -27,13 +27,15 @@ Typical usage
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Sequence, Callable
+from typing import Sequence, Callable, Union
 import gymnasium as gym
-from traffic_drl.config import EnvConfig, load_env_config
+from traffic_drl.config import EnvConfig, RewardConfig, load_env_config
 from traffic_drl.environment.wrappers import wrap_environment
 from traffic_drl.environment.custom_observations import MixedTrafficObservation
+from traffic_drl.environment.custom_rewards import CombinedReward
 from traffic_drl.train.scenario_sampler import ScenarioSampler
 import traffic_drl.run_id as r_id
+from traffic_drl.environment.all_red_env import AllRedSumoEnvironment
 
 # Type aliases for SB3 vectorised environments.  We use strings here so the
 # module can be imported even when stable-baselines3 is not installed.
@@ -44,6 +46,57 @@ try:
     VecEnv = DummyVecEnv | VecNormalize
 except ModuleNotFoundError:
     VecEnv = None  # type: ignore[assignment,misc]
+
+
+# Sumo-rl built-in reward function names recognised without instantiation.
+_BUILTIN_REWARD_NAMES = frozenset({"pressure", "queue", "diff-waiting-time", "wait"})
+
+
+def build_reward_fn(reward_config: RewardConfig) -> Union[str, Callable]:
+    """Resolve a :class:`~traffic_drl.config.RewardConfig` into a callable or string.
+
+    Converts the ``reward.type`` / ``reward.params`` YAML block into the value
+    expected by :func:`create_sumo_env`'s ``reward_fn`` argument.
+
+    Supported types
+    ---------------
+    * ``"combined"`` -- instantiates :class:`~traffic_drl.environment.custom_rewards.CombinedReward`
+      and forwards every key in ``reward.params`` as a keyword argument.  Unknown
+      keys raise ``TypeError`` at construction time, making config errors loud.
+    * sumo-rl built-ins (``"pressure"``, ``"queue"``, ``"diff-waiting-time"``) --
+      returned as-is; sumo-rl resolves them internally.
+
+    Args:
+        reward_config: Parsed reward section from the training YAML.
+
+    Returns:
+        str | Callable: Value suitable for the ``reward_fn`` argument of
+        :func:`create_sumo_env`.
+
+    Raises:
+        ValueError: If ``reward_config.type`` is not recognised.
+        TypeError: If ``reward_config.params`` contains a key that
+            ``CombinedReward.__init__`` does not accept.
+    """
+    rtype = reward_config.type
+    params = dict(reward_config.params)  # copy so callers can't mutate config
+
+    if rtype == "combined":
+        return CombinedReward(**params)
+
+    if rtype in _BUILTIN_REWARD_NAMES:
+        if params:
+            import warnings
+            warnings.warn(
+                f"reward.params {list(params)} are ignored for built-in reward '{rtype}'.",
+                stacklevel=2,
+            )
+        return rtype
+
+    raise ValueError(
+        f"Unknown reward type '{rtype}'. "
+        f"Expected 'combined' or one of {sorted(_BUILTIN_REWARD_NAMES)}."
+    )
 
 
 def create_sumo_env(
@@ -138,7 +191,6 @@ def create_sumo_env(
     cmds = " ".join(additional_cmd)
     
     env_kwargs = dict(
-        id="sumo-rl-v0",
         net_file=config.network.net_file,
         route_file=str(route_file),
         out_csv_name=str(results_dir / "run_csv"),
@@ -148,12 +200,13 @@ def create_sumo_env(
         max_green=config.timing.max_green,
         delta_time=config.timing.delta_time,
         yellow_time=config.timing.yellow_time,
+        red_time=config.timing.red_time,
         sumo_seed=seed if seed is not None else "random",
-        ts_ids=[config.traffic_light.ts_id],
         fixed_ts=fixed_ts,
         reward_fn=reward_fn,
         single_agent=config.traffic_light.single_agent,
         additional_sumo_cmd=cmds,
+        program_id=config.traffic_light.program_id,
     )
     
     if custom_observation:
@@ -164,7 +217,7 @@ def create_sumo_env(
             vehicle_classes=vehicle_classes
         )
 
-    env = gym.make(**env_kwargs)
+    env = AllRedSumoEnvironment(**env_kwargs)
 
     if wrap:
         env = wrap_environment(env, scenario_sampler)

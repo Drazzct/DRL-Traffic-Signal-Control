@@ -115,7 +115,7 @@ class CombinedReward:
         v_stall: float = 0.1,
         t_stall_limit: float = 120.0,
         deadlock_penalty: float = 5.0,
-        lambda_f: float = 0.9,
+        lambda_f: float = 0.99,
         max_wait_time: float = 60.0,
     ):
         self.wait_weight = wait_weight

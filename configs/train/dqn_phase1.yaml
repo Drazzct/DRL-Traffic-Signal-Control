@@ -3,18 +3,64 @@ experiment:
   seed: 5
   device: cpu
   split_allowed: TR
+
 environment:
   env_config_path: configs/environment/dev_single_intersection.yaml
   manifest_path: scenarios/scenario_manifest.csv
+
 reward:
-  type: queue_loss
-  params: {}
+  # Reward function type.
+  # "combined" → CombinedReward (custom weighted objective + flicker + deadlock)
+  # "pressure" | "queue" | "diff-waiting-time" → sumo-rl built-in strings
+  type: combined
+
+  params:
+    # --- Traffic objective weights ---
+    # Weight on the normalised PCU-weighted waiting-time term (W_t).
+    # Increase to penalise long queues more heavily.
+    wait_weight: 1.5
+
+    # Weight on the normalised total inbound queue term (Q_t).
+    # Dominates the reward signal when vehicles are backing up.
+    queue_weight: 2.0
+
+    # --- Flicker penalty ---
+    # Extra penalty weight for unnecessary phase changes.
+    # Scales the exponential-decay flicker accumulator.
+    flicker_weight: 1.0
+
+    # Exponential decay factor for the flicker state (0 < lambda_f < 1).
+    # Values closer to 1 give a longer memory of recent phase changes.
+    lambda_f: 0.99
+
+    # --- Deadlock detection ---
+    # Simulation step size in seconds; must match timing.delta_time in the
+    # environment config so that stall_time accumulates correctly.
+    delta_time: 5
+
+    # Speed threshold in m/s below which a lane is considered stalled.
+    v_stall: 0.1
+
+    # Seconds of continuous stall before the deadlock penalty fires.
+    t_stall_limit: 120.0
+
+    # Flat penalty added to r_t when deadlock is detected.
+    deadlock_penalty: 5.0
+
+    # --- Normalisation ---
+    # Maximum acceptable single-vehicle waiting time (seconds).
+    # Used to normalise the W_t term to [0, 1].
+    max_wait_time: 60.0
+
+  # Reward wrapper modifiers (reserved for future use, e.g. reward clipping).
   wrappers: {}
+
 normalization:
   norm_obs: true
   norm_reward: true
   clip_obs: 1.0
   clip_reward: 10.0
+
 model_hyperparameters:
   policy: MlpPolicy
   learning_rate: 0.0001
@@ -22,6 +68,7 @@ model_hyperparameters:
   buffer_size: 10000
   learning_starts: 100
   gamma: 0.99
+
 training_control:
   total_timesteps: 10000
   save_freq: 1000
