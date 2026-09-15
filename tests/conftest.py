@@ -18,12 +18,6 @@ from pathlib import Path
 
 
 def _is_sumo_home(path: Path) -> bool:
-    """Return True only if *path* looks like a real SUMO installation.
-
-    A genuine SUMO_HOME always contains both a 'data' and a 'tools'
-    subdirectory.  This guards against accidentally matching a project-local
-    directory that happens to be called 'sumo'.
-    """
     return path.is_dir() and (path / "data").is_dir() and (path / "tools").is_dir()
 
 
