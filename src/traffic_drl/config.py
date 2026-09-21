@@ -68,6 +68,11 @@ class TrafficLightConfig:
 
     ts_id: str
     single_agent: bool
+    program_id: str | None = None
+    """SUMO tlLogic programID to activate.  ``None`` uses the first program
+    SUMO loads (sumo-rl default).  Set to a specific string (e.g. ``"rl"``)
+    to select a named program from the net file without modifying the XML.
+    """
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,7 @@ class TimingConfig:
     min_green: int
     max_green: int
     yellow_time: int
+    red_time: int
 
 
 @dataclass(frozen=True)
@@ -319,6 +325,7 @@ def load_env_config(
         traffic_light=TrafficLightConfig(
             ts_id=tl["ts_id"],
             single_agent=bool(tl["single_agent"]),
+            program_id=tl.get("program_id") or None,
         ),
         timing=TimingConfig(
             num_seconds=int(timing["num_seconds"]),
@@ -326,6 +333,7 @@ def load_env_config(
             min_green=int(timing["min_green"]),
             max_green=int(timing["max_green"]),
             yellow_time=int(timing["yellow_time"]),
+            red_time=int(timing.get("red_time", 2)),
         ),
         sumo_options=SumoOptions(
             use_gui=bool(sumo["use_gui"]),

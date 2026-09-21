@@ -60,30 +60,32 @@ class MultiScenarioWrapper(gym.Wrapper):
         seed: int | None = None,
         options: dict[str, object] | None = None,
     ) -> tuple[np.ndarray, dict[str, object]]:
-        """Sample a new scenario then delegate to the wrapped environment.
+        """Sample a new scenario then delegate to the wrapped environment."""
 
-        Returns:
-            tuple: Initial observation and info dict augmented with
-            ``{"scenario": self.active_scenario}``.
-
-        TODO (SV2): pass the sampled route file to the underlying SUMO-RL
-        environment via its reset ``options`` or by reconfiguring the env.
-        """
-        raise NotImplementedError
+        self.active_scenario = self.scenario_sampler.sample()
+        if options is None:
+            options = {}
+        options["route_file"] = str(self.active_scenario.route_file)
+        
+        # SUMO-RL uses route_file internally, we also set it directly on the unwrapped env
+        # just in case options are not properly propagated by all wrapper layers.
+        if hasattr(self.unwrapped, "route_file"):
+            self.unwrapped.route_file = str(self.active_scenario.route_file)
+            
+        obs, info = super().reset(seed=seed, options=options)
+        info["scenario"] = self.active_scenario
+        return obs, info
 
     def step(
         self,
         action: int | np.ndarray,
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, object]]:
-        """Delegate one Gymnasium step and attach active scenario metadata.
+        """Delegate one Gymnasium step and attach active scenario metadata."""
 
-        Returns:
-            tuple: Observation, reward, terminated, truncated, and info dict
-            augmented with the current scenario metadata.
-
-        TODO (SV2): forward the step unchanged; only augment ``info``.
-        """
-        raise NotImplementedError
+        obs, reward, terminated, truncated, info = super().step(action)
+        if self.active_scenario is not None:
+            info["scenario"] = self.active_scenario
+        return obs, reward, terminated, truncated, info
 
 
 class MetricsInfoWrapper(gym.Wrapper):
@@ -113,30 +115,79 @@ class MetricsInfoWrapper(gym.Wrapper):
         seed: int | None = None,
         options: dict[str, object] | None = None,
     ) -> tuple[np.ndarray, dict[str, object]]:
-        """Reset the environment and clear accumulated metric state.
+        """Reset the environment and clear accumulated metric state."""
 
-        Returns:
-            tuple: Initial observation and initial info dict.
-
-        TODO (SV2): clear internal accumulators and delegate to the wrapped env.
-        """
-        raise NotImplementedError
+        self._step_count = 0
+        self._total_wait_time = 0.0
+        self._total_queue_length = 0.0
+        self._total_time_loss = 0.0
+        self._total_arrived = 0.0
+        self._phase_switches = 0
+        self._min_green_violations = 0
+        self._last_phase = {}
+        self._time_in_phase = {}
+        
+        return super().reset(seed=seed, options=options)
 
     def step(
         self,
         action: int | np.ndarray,
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, object]]:
-        """Collect metrics while preserving the Gymnasium step contract.
+        """Collect metrics while preserving the Gymnasium step contract."""
 
-        Returns:
-            tuple: Standard Gymnasium transition with traffic metrics added
-            to ``info`` at every step and summarised at episode end.
-
-        TODO (SV2): call ``super().step(action)``, read metrics from the SUMO-RL
-        traffic-signal object, accumulate them, and on ``terminated or truncated``
-        compute episode aggregates.
-        """
-        raise NotImplementedError
+        obs, reward, terminated, truncated, info = super().step(action)
+        self._step_count += 1
+        
+        if hasattr(self.unwrapped, "sumo"):
+            self._total_arrived += self.unwrapped.sumo.simulation.getArrivedNumber()
+        
+        # Accumulate metrics from all traffic signals
+        signals = getattr(self.unwrapped, "traffic_signals", {})
+        
+        current_wait = 0.0
+        current_queue = 0.0
+        current_time_loss = 0.0
+        
+        for ts_id, ts in signals.items():
+            # Queue length: sum of halting vehicles across all lanes
+            for lane in ts.lanes:
+                current_queue += ts.sumo.lane.getLastStepHaltingNumber(lane)
+                
+                # Waiting time and Time loss
+                for veh in ts.sumo.lane.getLastStepVehicleIDs(lane):
+                    current_wait += ts.sumo.vehicle.getAccumulatedWaitingTime(veh)
+                    current_time_loss += ts.sumo.vehicle.getTimeLoss(veh)
+                    
+            # Phase Tracking
+            current_phase = getattr(ts, "green_phase", None)
+            if current_phase is not None:
+                if ts_id not in self._last_phase:
+                    self._last_phase[ts_id] = current_phase
+                    self._time_in_phase[ts_id] = 0
+                    
+                if current_phase != self._last_phase[ts_id]:
+                    self._phase_switches += 1
+                    if self._time_in_phase[ts_id] < getattr(ts, "min_green", 0):
+                        self._min_green_violations += 1
+                    self._last_phase[ts_id] = current_phase
+                    self._time_in_phase[ts_id] = 0
+                else:
+                    self._time_in_phase[ts_id] += getattr(ts, "delta_time", 1)
+                
+        self._total_wait_time += current_wait
+        self._total_queue_length += current_queue
+        self._total_time_loss += current_time_loss
+        
+        if terminated or truncated:
+            # Averages over the episode length
+            info["average_waiting_time"] = self._total_wait_time / max(1, self._step_count)
+            info["average_queue_length"] = self._total_queue_length / max(1, self._step_count)
+            info["time_loss"] = self._total_time_loss / max(1, self._step_count)
+            info["phase_switch_rate"] = self._phase_switches / max(1, self._step_count)
+            info["min_green_violations"] = self._min_green_violations
+            info["throughput"] = self._total_arrived
+            
+        return obs, reward, terminated, truncated, info
 
 
 def wrap_environment(
@@ -156,8 +207,9 @@ def wrap_environment(
 
     TODO (SV2): apply :class:`MetricsInfoWrapper` first, then
     :class:`MultiScenarioWrapper` if a sampler is provided.
-
-    Returns:
-        gym.Env: Wrapped environment preserving the Gymnasium API.
     """
-    raise NotImplementedError
+
+    env = MetricsInfoWrapper(env)
+    if scenario_sampler is not None:
+        env = MultiScenarioWrapper(env, scenario_sampler)
+    return env

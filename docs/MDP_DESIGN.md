@@ -111,7 +111,7 @@ $a_t \in \{0, 1, \dots, K-1\}$
 
 A centralized scalar reward balancing delay, queue-length vector penalties, and control smoothness, with a decaying flicker penalty term:
 
-$R_t = -\alpha W_t - \beta \|\mathbf{Q}_t\|_1 - P^{\text{flicker}}_t - P_{\text{deadlock}}$
+$R_t = -\alpha W_t - \beta \|\mathbf{Q}_t\|_1 - \gamma P^{\text{flicker}}_t - P_{\text{deadlock}}$
 
 where
 
