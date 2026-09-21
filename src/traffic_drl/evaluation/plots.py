@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from traffic_drl.contracts import EpisodeMetrics
+from traffic_drl.contracts import EpisodeMetrics, StepMetrics
 
 
 def _to_dataframe(records: Iterable[EpisodeMetrics | dict[str, Any]]) -> pd.DataFrame:
@@ -280,6 +280,152 @@ def plot_queue_heatmap(
     ax.set_xlabel("Simulation Time (s)", fontsize=12)
     ax.set_ylabel("Approach", fontsize=12)
 
+    fig.tight_layout()
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_step_metric_timeseries(
+    records: Iterable[StepMetrics | dict[str, Any]],
+    metric: str,
+    *,
+    output_path: str | Path,
+    title: str | None = None,
+) -> None:
+    """Plot a single metric progression over simulation seconds (time-step).
+
+    Args:
+        records: Iterable of StepMetrics or dicts containing step records.
+        metric: Column/field name to plot (e.g. 'accumulated_waiting_time', 'queue_length').
+        output_path: File path to save the generated image (.png or .pdf).
+        title: Optional plot title override.
+    """
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    df = _to_dataframe(records)
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    if df.empty or metric not in df.columns or "step" not in df.columns:
+        ax.text(0.5, 0.5, f"No data available for step metric: {metric}", ha="center", va="center")
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    controllers = df["controller"].unique() if "controller" in df.columns else ["Default"]
+    colors = plt.cm.tab10.colors
+
+    for idx, ctrl in enumerate(controllers):
+        sub = df[df["controller"] == ctrl] if "controller" in df.columns else df
+        # Sort by step to ensure smooth line trajectory
+        sub = sub.sort_values(by="step")
+        color = colors[idx % len(colors)]
+        ax.plot(sub["step"], sub[metric], label=ctrl, color=color, linewidth=2)
+
+    plot_title = title or f"{metric.replace('_', ' ').title()} Over Time"
+    ax.set_title(plot_title, fontsize=13, fontweight="bold")
+    ax.set_xlabel("Simulation Time (seconds)", fontsize=11)
+    ax.set_ylabel(metric.replace("_", " ").title(), fontsize=11)
+    ax.grid(True, linestyle="--", alpha=0.6)
+    if len(controllers) > 1:
+        ax.legend(title="Controller", frameon=True)
+
+    fig.tight_layout()
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_step_evaluation_dashboard(
+    records: Iterable[StepMetrics | dict[str, Any]],
+    *,
+    output_path: str | Path,
+    title: str | None = None,
+) -> None:
+    """Render a 4-panel dashboard tracking step-level traffic dynamics and controller metrics.
+
+    Panels:
+    1. Instantaneous Queue Length (stopped vehicles) vs Time
+    2. Accumulated Waiting Time vs Time
+    3. Mean Vehicle Speed (m/s) vs Time
+    4. Cumulative Agent Reward vs Time
+
+    Args:
+        records: Iterable of StepMetrics or dicts containing step records.
+        output_path: File path to save the generated image (.png or .pdf).
+        title: Optional overall dashboard title.
+    """
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    df = _to_dataframe(records)
+    if df.empty or "step" not in df.columns:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.text(0.5, 0.5, "No step metrics data provided", ha="center", va="center")
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    controllers = df["controller"].unique() if "controller" in df.columns else ["Default"]
+    colors = plt.cm.tab10.colors
+
+    metric_configs = [
+        (
+            axes[0, 0],
+            "queue_length",
+            "Instantaneous Queue Length",
+            "Stopped Vehicles (count)",
+            "Queue Length over Time",
+        ),
+        (
+            axes[0, 1],
+            "accumulated_waiting_time",
+            "Accumulated Waiting Time",
+            "Total Accumulated Delay (s)",
+            "Accumulated Waiting Time over Time",
+        ),
+        (
+            axes[1, 0],
+            "mean_speed",
+            "Mean Vehicle Speed",
+            "Velocity (m/s)",
+            "Average Traffic Speed over Time",
+        ),
+        (
+            axes[1, 1],
+            "cumulative_reward",
+            "Cumulative Agent Reward",
+            "Cumulative Reward",
+            "Cumulative Reward over Time",
+        ),
+    ]
+
+    for ax, col_name, y_label, full_label, sub_title in metric_configs:
+        if col_name in df.columns:
+            for idx, ctrl in enumerate(controllers):
+                sub = df[df["controller"] == ctrl] if "controller" in df.columns else df
+                sub = sub.sort_values(by="step")
+                color = colors[idx % len(colors)]
+                ax.plot(
+                    sub["step"],
+                    sub[col_name],
+                    label=ctrl,
+                    color=color,
+                    linewidth=2,
+                    alpha=0.9,
+                )
+        else:
+            ax.text(0.5, 0.5, f"Metric '{col_name}' not in records", ha="center", va="center")
+
+        ax.set_title(sub_title, fontsize=12, fontweight="bold")
+        ax.set_xlabel("Simulation Time (s)", fontsize=10)
+        ax.set_ylabel(full_label, fontsize=10)
+        ax.grid(True, linestyle="--", alpha=0.6)
+        if len(controllers) > 1:
+            ax.legend(title="Controller", frameon=True, fontsize=9)
+
+    main_title = title or "Traffic Control Per-Step Evaluation & Dynamics Dashboard"
+    fig.suptitle(main_title, fontsize=16, fontweight="bold", y=0.99)
     fig.tight_layout()
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)

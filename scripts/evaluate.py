@@ -19,7 +19,10 @@ from traffic_drl.evaluation import (
     parse_emissions,
     parse_tripinfo,
     plot_metric_comparison,
+    plot_step_evaluation_dashboard,
+    plot_step_metric_timeseries,
     save_evaluation_results,
+    save_step_metrics,
 )
 from traffic_drl.run_id import (
     ensure_run_directories,
@@ -100,6 +103,25 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=50,
         help="Step delay in milliseconds for SUMO-GUI (default: 50ms so vehicles move visibly).",
+    )
+
+    # Step-level timeline and comparison options
+    parser.add_argument(
+        "--plot-steps",
+        action="store_true",
+        default=True,
+        help="Generate per-time-step dynamics dashboard and accumulated diagrams (default: True).",
+    )
+    parser.add_argument(
+        "--no-plot-steps",
+        dest="plot_steps",
+        action="store_false",
+        help="Disable step-level metric recording and plotting.",
+    )
+    parser.add_argument(
+        "--compare-baseline",
+        action="store_true",
+        help="Also evaluate Fixed-Time baseline on identical seed/route to plot comparative step curves.",
     )
 
     # Output paths
@@ -297,6 +319,7 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         model = BaselineController(env.action_space)
 
     scenario_id = args.rou.stem
+    step_records = []
     print(f"[+] Running evaluation ({args.episodes} episode(s))...")
     records = evaluate_controller(
         controller=model,
@@ -305,6 +328,7 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         scenario_id=scenario_id,
         seed=args.seed,
         episodes=args.episodes,
+        step_metrics_collector=step_records if args.plot_steps else None,
     )
     env.close()
 
@@ -324,6 +348,69 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
             seed=args.seed,
         )
         records = [merged]
+
+    # Optional Baseline Comparison for side-by-side benchmarking
+    if args.compare_baseline and controller_name != "fixed_time":
+        print(f"\n[+] Running Fixed-Time Baseline on same scenario & seed for comparison...")
+        try:
+            base_run_id = generate_run_id(prefix="eval_baseline_fixed_time", run_type="test")
+            _, _, *_ = ensure_run_directories(base_run_id)
+            base_tripinfo = get_tripinfo_path(base_run_id)
+            base_emissions = get_emissions_path(base_run_id)
+            base_cmd = (
+                f"--tripinfo-output {base_tripinfo.as_posix()} "
+                f"--emission-output {base_emissions.as_posix()} "
+                f"--no-step-log true --duration-log.disable true --no-warnings true"
+            )
+            base_env = gym.make(
+                "sumo-rl-v0",
+                net_file=str(args.net),
+                route_file=str(args.rou),
+                use_gui=False,
+                num_seconds=args.num_seconds,
+                additional_sumo_cmd=base_cmd,
+                single_agent=True,
+            )
+
+            class BaselineController:
+                def __init__(self, action_space):
+                    self.action_space = action_space
+
+                def predict(self, obs, deterministic=True):
+                    return self.action_space.sample()
+
+            base_model = BaselineController(base_env.action_space)
+            base_recs = evaluate_controller(
+                controller=base_model,
+                env=base_env,
+                controller_name="fixed_time",
+                scenario_id=scenario_id,
+                seed=args.seed,
+                episodes=args.episodes,
+                step_metrics_collector=step_records if args.plot_steps else None,
+            )
+            base_env.close()
+
+            if base_tripinfo.exists():
+                t_m = parse_tripinfo(base_tripinfo, episode_seconds=args.num_seconds)
+                e_m = (
+                    parse_emissions(base_emissions)
+                    if base_emissions.exists()
+                    else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
+                )
+                merged_base = merge_tripinfo_metrics(
+                    t_m,
+                    e_m,
+                    controller="fixed_time",
+                    scenario_id=scenario_id,
+                    seed=args.seed,
+                )
+                base_recs = [merged_base]
+
+            records.extend(base_recs)
+            print("[+] Baseline evaluation completed.")
+        except Exception as exc:
+            print(f"[!] Warning: Could not run baseline comparison: {exc}", file=sys.stderr)
 
     # Aggregate & display
     summaries = aggregate_metrics(records)
@@ -346,7 +433,39 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
 
     out_plot = args.output_dir / "waiting_time_comparison.png"
     plot_metric_comparison(records, "average_waiting_time", output_path=out_plot)
-    print(f"[OK] Plot saved to: {out_plot}")
+    print(f"[OK] Summary comparison plot saved to: {out_plot}")
+
+    # Step-level timeline metrics and diagrams
+    if args.plot_steps and step_records:
+        step_csv = args.output_dir / "step_metrics.csv"
+        save_step_metrics(step_records, step_csv)
+        print(f"[OK] Time-step metrics saved to: {step_csv}")
+
+        dashboard_plot = args.output_dir / "step_evaluation_dashboard.png"
+        plot_step_evaluation_dashboard(
+            step_records,
+            output_path=dashboard_plot,
+            title=f"Traffic Dynamics & Evaluation Timeline - {scenario_id}",
+        )
+        print(f"[OK] Step dashboard plot saved to: {dashboard_plot}")
+
+        cum_wait_plot = args.output_dir / "accumulated_waiting_time.png"
+        plot_step_metric_timeseries(
+            step_records,
+            metric="accumulated_waiting_time",
+            output_path=cum_wait_plot,
+            title=f"Accumulated Waiting Time Progression - {scenario_id}",
+        )
+        print(f"[OK] Accumulated waiting time plot saved to: {cum_wait_plot}")
+
+        queue_plot = args.output_dir / "queue_length_timeline.png"
+        plot_step_metric_timeseries(
+            step_records,
+            metric="queue_length",
+            output_path=queue_plot,
+            title=f"Queue Length Over Time - {scenario_id}",
+        )
+        print(f"[OK] Queue length timeline plot saved to: {queue_plot}")
 
 
 

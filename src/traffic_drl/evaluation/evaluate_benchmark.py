@@ -45,6 +45,7 @@ from traffic_drl.contracts import (
     EnvironmentFactory,
     EpisodeMetrics,
     ScenarioSource,
+    StepMetrics,
 )
 from traffic_drl.config import EvalConfig, load_eval_config
 from traffic_drl.evaluation.metrics import collect_episode_metrics, interpret_results
@@ -63,6 +64,7 @@ def evaluate_controller(
     max_steps: int | None = 1000,
     tripinfo_path: str | Path | None = None,
     model: Controller | None = None,
+    step_metrics_collector: list[StepMetrics] | None = None,
 ) -> list[EpisodeMetrics]:
     """Roll out one controller and collect standard traffic metrics.
 
@@ -83,6 +85,8 @@ def evaluate_controller(
         max_steps: Maximum step limit safeguard per episode (default: 1000).
         tripinfo_path: Optional path to SUMO tripinfo.xml file.
         model: Backwards-compatibility alias for controller.
+        step_metrics_collector: Optional list to collect fine-grained
+            :class:`~traffic_drl.contracts.StepMetrics` for every control step.
 
     Returns:
         list[EpisodeMetrics]: One typed result per completed episode.
@@ -112,6 +116,9 @@ def evaluate_controller(
         step_count = 0
         latencies: list[float] = []
 
+        running_cum_waiting = 0.0
+        running_cum_reward = 0.0
+
         while not (terminated or truncated):
             t0 = time.perf_counter()
             action = actual_controller.predict(obs, deterministic=deterministic)
@@ -129,8 +136,52 @@ def evaluate_controller(
                 terminated, truncated = bool(done), False
 
             step_count += 1
+            step_reward = float(reward) if reward is not None else 0.0
+            running_cum_reward += step_reward
+
+            sim_step_sec = float(step_count * 5.0)
+            step_waiting = 0.0
+            step_stopped = 0.0
+            step_mean_speed = 0.0
+
             if isinstance(s_info, dict):
                 last_info.update(s_info)
+                sim_step_sec = float(s_info.get("step", sim_step_sec))
+                step_stopped = float(
+                    s_info.get("system_total_stopped", s_info.get("average_queue_length", s_info.get("queue_length", 0.0)))
+                )
+                step_waiting = float(
+                    s_info.get("system_total_waiting_time", s_info.get("average_waiting_time", s_info.get("waiting_time", 0.0)))
+                )
+                step_mean_speed = float(
+                    s_info.get("system_mean_speed", s_info.get("mean_speed", s_info.get("average_speed", 0.0)))
+                )
+
+            running_cum_waiting += step_waiting
+
+            if step_metrics_collector is not None:
+                act_val = None
+                if isinstance(action, (int, np.integer)):
+                    act_val = int(action)
+                elif isinstance(action, np.ndarray) and action.size == 1:
+                    act_val = int(action.item())
+
+                step_metrics_collector.append(
+                    StepMetrics(
+                        step=sim_step_sec,
+                        controller=controller_name,
+                        scenario_id=scenario_id,
+                        seed=current_seed,
+                        episode=ep,
+                        queue_length=step_stopped,
+                        waiting_time=step_waiting,
+                        accumulated_waiting_time=running_cum_waiting,
+                        mean_speed=step_mean_speed,
+                        reward=step_reward,
+                        cumulative_reward=running_cum_reward,
+                        action=act_val,
+                    )
+                )
 
             if max_steps is not None and step_count >= max_steps:
                 break
@@ -262,6 +313,39 @@ def save_evaluation_results(
 
     if suffix == ".csv":
         fieldnames = [f.name for f in fields(EpisodeMetrics)]
+        with dest.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for r in dict_records:
+                writer.writerow(r)
+    elif suffix == ".json":
+        with dest.open("w", encoding="utf-8") as f:
+            json.dump(dict_records, f, indent=2)
+    else:
+        raise ValueError(
+            f"Unsupported output file extension: '{suffix}'. Supported formats are '.csv' and '.json'."
+        )
+
+
+def save_step_metrics(
+    records: Iterable[StepMetrics],
+    output_path: str | Path,
+) -> None:
+    """Persist fine-grained per-time-step metrics to a CSV or JSON file.
+
+    Args:
+        records: Iterable of StepMetrics instances.
+        output_path: Destination file path (.csv or .json).
+    """
+    dest = Path(output_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    suffix = dest.suffix.lower()
+
+    records_list = list(records)
+    dict_records = [asdict(r) for r in records_list]
+
+    if suffix == ".csv":
+        fieldnames = [f.name for f in fields(StepMetrics)]
         with dest.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()

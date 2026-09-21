@@ -13,6 +13,7 @@ from traffic_drl.contracts import (
     ScenarioRecord,
     ScenarioSource,
     SmokeTestResult,
+    StepMetrics,
 )
 from traffic_drl.evaluation import (
     ADDITIONAL_METRICS,
@@ -31,9 +32,12 @@ from traffic_drl.evaluation import (
     plot_learning_curve,
     plot_metric_comparison,
     plot_queue_heatmap,
+    plot_step_evaluation_dashboard,
+    plot_step_metric_timeseries,
     run_benchmark,
     run_smoke_test,
     save_evaluation_results,
+    save_step_metrics,
     standard_metric_names,
 )
 
@@ -602,4 +606,101 @@ def test_run_benchmark(tmp_path: Path) -> None:
     assert len(report.summaries) == 2
     assert (tmp_path / "benchmark_out" / "metrics.csv").exists()
     assert (tmp_path / "benchmark_out" / "metrics.json").exists()
+
+
+# ==========================================
+# 6. Step-Level Evaluation & Dynamics Tests
+# ==========================================
+
+
+def test_evaluate_controller_step_metrics() -> None:
+    """Check evaluate_controller populates fine-grained step metrics."""
+    env = MockGymEnv(max_steps=4)
+    ctrl = MockController()
+    step_records: list[StepMetrics] = []
+
+    metrics = evaluate_controller(
+        controller=ctrl,
+        env=env,
+        controller_name="test_ctrl",
+        scenario_id="SCEN-01",
+        seed=100,
+        step_metrics_collector=step_records,
+    )
+
+    assert len(metrics) == 1
+    assert len(step_records) == 4
+    for r in step_records:
+        assert isinstance(r, StepMetrics)
+        assert r.controller == "test_ctrl"
+        assert r.scenario_id == "SCEN-01"
+        assert r.seed == 100
+
+    last_step = step_records[-1]
+    assert last_step.cumulative_reward == 4.0
+    assert last_step.accumulated_waiting_time > 0.0
+
+
+def test_save_step_metrics_csv_and_json(tmp_path: Path) -> None:
+    """Check serialising step metrics to CSV and JSON files."""
+    records = [
+        StepMetrics(
+            step=5.0 * i,
+            controller="ppo",
+            scenario_id="TEST",
+            seed=42,
+            episode=0,
+            queue_length=float(i),
+            waiting_time=float(i * 2),
+            accumulated_waiting_time=float(i * (i + 1)),
+            mean_speed=10.0,
+            reward=1.0,
+            cumulative_reward=float(i + 1),
+            action=0,
+        )
+        for i in range(3)
+    ]
+
+    csv_out = tmp_path / "steps.csv"
+    save_step_metrics(records, csv_out)
+    assert csv_out.exists()
+    content = csv_out.read_text(encoding="utf-8")
+    assert "accumulated_waiting_time" in content
+    assert "ppo" in content
+
+    json_out = tmp_path / "steps.json"
+    save_step_metrics(records, json_out)
+    assert json_out.exists()
+    assert json_out.stat().st_size > 0
+
+
+def test_plot_step_evaluation_dashboard_and_timeseries(tmp_path: Path) -> None:
+    """Render 4-panel dashboard and single metric timeseries from step metrics."""
+    records = [
+        StepMetrics(
+            step=float(t * 5),
+            controller="ppo" if t % 2 == 0 else "fixed_time",
+            scenario_id="SCEN-01",
+            seed=42,
+            episode=0,
+            queue_length=float(t * 2),
+            waiting_time=float(t * 3),
+            accumulated_waiting_time=float(t * 10),
+            mean_speed=12.0 - t * 0.5,
+            reward=0.5,
+            cumulative_reward=float(t),
+            action=0,
+        )
+        for t in range(5)
+    ]
+
+    dash_png = tmp_path / "dashboard.png"
+    plot_step_evaluation_dashboard(records, output_path=dash_png)
+    assert dash_png.exists()
+    assert dash_png.stat().st_size > 0
+
+    ts_png = tmp_path / "accumulated_waiting.png"
+    plot_step_metric_timeseries(records, "accumulated_waiting_time", output_path=ts_png)
+    assert ts_png.exists()
+    assert ts_png.stat().st_size > 0
 

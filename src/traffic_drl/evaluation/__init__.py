@@ -20,6 +20,7 @@ from traffic_drl.evaluation.evaluate_benchmark import (
     evaluate_controller,
     evaluate_manifest,
     save_evaluation_results,
+    save_step_metrics,
     run_benchmark,
 )
 from traffic_drl.evaluation.metrics import (
@@ -41,6 +42,8 @@ from traffic_drl.evaluation.plots import (
     plot_metric_comparison,
     plot_learning_curve,
     plot_queue_heatmap,
+    plot_step_evaluation_dashboard,
+    plot_step_metric_timeseries,
 )
 from traffic_drl.evaluation.test import check_environment, run_smoke_test
 
@@ -49,6 +52,7 @@ __all__ = [
     "evaluate_controller",
     "evaluate_manifest",
     "save_evaluation_results",
+    "save_step_metrics",
     "run_benchmark",
     # metrics
     "standard_metric_names",
@@ -67,6 +71,8 @@ __all__ = [
     "plot_metric_comparison",
     "plot_learning_curve",
     "plot_queue_heatmap",
+    "plot_step_evaluation_dashboard",
+    "plot_step_metric_timeseries",
     # test
     "check_environment",
     "run_smoke_test",
