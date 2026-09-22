@@ -5,17 +5,23 @@ import sys
 import os
 from pathlib import Path
 
+import pytest
+
 # Add the src directory to the path so we can import traffic_drl
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-def test_import(module_name):
-    try:
-        __import__(module_name)
-        print(f"  ✓ {module_name}")
-        return True
-    except Exception as e:
-        print(f"  ✗ {module_name}: {e}")
-        return False
+MODULES = [
+    "traffic_drl.config",
+    "traffic_drl.run_id",
+    "traffic_drl.environment.make_env",
+    "traffic_drl.environment.wrappers",
+    "traffic_drl.evaluation.evaluate_benchmark",
+    "traffic_drl.contracts",
+]
+
+@pytest.mark.parametrize("module_name", MODULES)
+def test_import(module_name: str) -> None:
+    __import__(module_name)
 
 def main():
     print("Testing imports...")

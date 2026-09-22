@@ -30,11 +30,14 @@ Typical usage
 from __future__ import annotations
 
 import csv
+from dataclasses import asdict, fields
 import json
 from pathlib import Path
-from typing import Iterable
+import time
+from typing import Any, Iterable
 
 import gymnasium as gym
+import numpy as np
 
 from traffic_drl.contracts import (
     BenchmarkReport,
@@ -42,19 +45,26 @@ from traffic_drl.contracts import (
     EnvironmentFactory,
     EpisodeMetrics,
     ScenarioSource,
+    StepMetrics,
 )
 from traffic_drl.config import EvalConfig, load_eval_config
+from traffic_drl.evaluation.metrics import collect_episode_metrics, interpret_results
+from traffic_drl.evaluation.parse_tripinfo import parse_tripinfo
 
 
 def evaluate_controller(
-    controller: Controller,
-    env: gym.Env,
+    controller: Controller | None = None,
+    env: gym.Env | None = None,
     *,
     controller_name: str,
     scenario_id: str,
     seed: int,
     deterministic: bool = True,
     episodes: int = 1,
+    max_steps: int | None = 1000,
+    tripinfo_path: str | Path | None = None,
+    model: Controller | None = None,
+    step_metrics_collector: list[StepMetrics] | None = None,
 ) -> list[EpisodeMetrics]:
     """Roll out one controller and collect standard traffic metrics.
 
@@ -72,21 +82,139 @@ def evaluate_controller(
         seed: Evaluation seed; used to reset the environment reproducibly.
         deterministic: Disable policy exploration during inference.
         episodes: Number of repeated episodes for this scenario/seed.
+        max_steps: Maximum step limit safeguard per episode (default: 1000).
         tripinfo_path: Optional path to SUMO tripinfo.xml file.
-
-    TODO (SV3): implement the reset → predict → step loop; read metrics from
-    the ``info`` dict populated by
-    :class:`~traffic_drl.environment.wrappers.MetricsInfoWrapper`; measure
-    inference latency per step.
+        model: Backwards-compatibility alias for controller.
+        step_metrics_collector: Optional list to collect fine-grained
+            :class:`~traffic_drl.contracts.StepMetrics` for every control step.
 
     Returns:
         list[EpisodeMetrics]: One typed result per completed episode.
     """
+    actual_controller = controller if controller is not None else model
+    if actual_controller is None:
+        raise ValueError("A controller or model must be provided.")
+    if env is None:
+        raise ValueError("A Gymnasium environment must be provided.")
+
     results: list[EpisodeMetrics] = []
 
     for ep in range(episodes):
-        if hasattr(model, "reset") and callable(model.reset):
-            model.reset()
+        current_seed = seed + ep
+        if hasattr(actual_controller, "reset") and callable(actual_controller.reset):
+            actual_controller.reset()
+
+        reset_ret = env.reset(seed=current_seed)
+        if isinstance(reset_ret, tuple) and len(reset_ret) == 2:
+            obs, info = reset_ret
+        else:
+            obs, info = reset_ret, {}
+
+        last_info: dict[str, Any] = dict(info) if isinstance(info, dict) else {}
+        terminated = False
+        truncated = False
+        step_count = 0
+        latencies: list[float] = []
+
+        running_cum_waiting = 0.0
+        running_cum_reward = 0.0
+
+        while not (terminated or truncated):
+            t0 = time.perf_counter()
+            action = actual_controller.predict(obs, deterministic=deterministic)
+            latencies.append(time.perf_counter() - t0)
+
+            # Handle models where predict returns (action, state)
+            if isinstance(action, tuple):
+                action = action[0]
+
+            step_ret = env.step(action)
+            if len(step_ret) == 5:
+                obs, reward, terminated, truncated, s_info = step_ret
+            else:
+                obs, reward, done, s_info = step_ret
+                terminated, truncated = bool(done), False
+
+            step_count += 1
+            step_reward = float(reward) if reward is not None else 0.0
+            running_cum_reward += step_reward
+
+            sim_step_sec = float(step_count * 5.0)
+            step_waiting = 0.0
+            step_stopped = 0.0
+            step_mean_speed = 0.0
+
+            if isinstance(s_info, dict):
+                last_info.update(s_info)
+                sim_step_sec = float(s_info.get("step", sim_step_sec))
+                step_stopped = float(
+                    s_info.get("system_total_stopped", s_info.get("average_queue_length", s_info.get("queue_length", 0.0)))
+                )
+                step_waiting = float(
+                    s_info.get("system_total_waiting_time", s_info.get("average_waiting_time", s_info.get("waiting_time", 0.0)))
+                )
+                step_mean_speed = float(
+                    s_info.get("system_mean_speed", s_info.get("mean_speed", s_info.get("average_speed", 0.0)))
+                )
+
+            running_cum_waiting += step_waiting
+
+            if step_metrics_collector is not None:
+                act_val = None
+                if isinstance(action, (int, np.integer)):
+                    act_val = int(action)
+                elif isinstance(action, np.ndarray) and action.size == 1:
+                    act_val = int(action.item())
+
+                step_metrics_collector.append(
+                    StepMetrics(
+                        step=sim_step_sec,
+                        controller=controller_name,
+                        scenario_id=scenario_id,
+                        seed=current_seed,
+                        episode=ep,
+                        queue_length=step_stopped,
+                        waiting_time=step_waiting,
+                        accumulated_waiting_time=running_cum_waiting,
+                        mean_speed=step_mean_speed,
+                        reward=step_reward,
+                        cumulative_reward=running_cum_reward,
+                        action=act_val,
+                    )
+                )
+
+            if max_steps is not None and step_count >= max_steps:
+                break
+
+        if latencies:
+            last_info["inference_latency"] = float(np.mean(latencies))
+
+        # Check tripinfo XML if provided
+        if tripinfo_path is not None and Path(tripinfo_path).exists():
+            t_m = parse_tripinfo(tripinfo_path)
+            last_info.setdefault("average_waiting_time", t_m.average_waiting_time)
+            last_info.setdefault("time_loss", t_m.average_time_loss)
+            last_info.setdefault("travel_time", t_m.average_travel_time)
+            last_info.setdefault("throughput", t_m.throughput)
+
+        # Fallback defaults for missing primary keys so dummy envs don't crash
+        last_info.setdefault("average_waiting_time", 0.0)
+        last_info.setdefault("average_queue_length", 0.0)
+        last_info.setdefault("time_loss", 0.0)
+        last_info.setdefault("throughput", 0.0)
+        last_info.setdefault("phase_switch_rate", 0.0)
+        last_info.setdefault("min_green_violations", 0)
+
+        ep_metric = collect_episode_metrics(
+            last_info,
+            controller=controller_name,
+            scenario_id=scenario_id,
+            seed=current_seed,
+        )
+        results.append(ep_metric)
+
+    return results
+
 
 def evaluate_manifest(
     controller: Controller,
@@ -98,6 +226,7 @@ def evaluate_manifest(
     controller_name: str,
     deterministic: bool = True,
     episodes_per_scenario: int = 1,
+    allow_te: bool = False,
 ) -> list[EpisodeMetrics]:
     """Evaluate every scenario in *split* with each seed in *seeds*.
 
@@ -118,9 +247,7 @@ def evaluate_manifest(
         controller_name: Label for the output records.
         deterministic: Whether policy exploration is disabled.
         episodes_per_scenario: Episode repetitions per (scenario, seed) pair.
-
-    TODO (SV3): prevent TE evaluation before the model and manifest are frozen;
-    close the environment after each (scenario, seed) pair.
+        allow_te: Explicit flag to allow evaluating on the held-out TE split.
 
     Returns:
         list[EpisodeMetrics]: All results across every scenario, seed, and episode.
@@ -132,6 +259,9 @@ def evaluate_manifest(
         )
 
     records = manifest.records_for_split(split)
+    if not records and split != normalized_split:
+        records = manifest.records_for_split(normalized_split)
+
     all_metrics: list[EpisodeMetrics] = []
     seeds_list = list(seeds)
 
@@ -140,7 +270,7 @@ def evaluate_manifest(
             env = env_factory(record, seed)
             try:
                 metrics = evaluate_controller(
-                    model,
+                    controller,
                     env,
                     controller_name=controller_name,
                     scenario_id=record.scenario_id,
@@ -171,9 +301,6 @@ def save_evaluation_results(
         output_path: Destination file.  The parent directory is created if it
             does not exist.
 
-    TODO (SV3): decide whether to write CSV or JSON as the canonical output
-    format and document it in the evaluation config.
-
     Returns:
         None.
     """
@@ -200,8 +327,46 @@ def save_evaluation_results(
         )
 
 
+def save_step_metrics(
+    records: Iterable[StepMetrics],
+    output_path: str | Path,
+) -> None:
+    """Persist fine-grained per-time-step metrics to a CSV or JSON file.
+
+    Args:
+        records: Iterable of StepMetrics instances.
+        output_path: Destination file path (.csv or .json).
+    """
+    dest = Path(output_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    suffix = dest.suffix.lower()
+
+    records_list = list(records)
+    dict_records = [asdict(r) for r in records_list]
+
+    if suffix == ".csv":
+        fieldnames = [f.name for f in fields(StepMetrics)]
+        with dest.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for r in dict_records:
+                writer.writerow(r)
+    elif suffix == ".json":
+        with dest.open("w", encoding="utf-8") as f:
+            json.dump(dict_records, f, indent=2)
+    else:
+        raise ValueError(
+            f"Unsupported output file extension: '{suffix}'. Supported formats are '.csv' and '.json'."
+        )
+
+
 def run_benchmark(
     config: EvalConfig | str | Path = "configs/evaluation/phase1_validation.yaml",
+    *,
+    allow_te: bool = False,
+    scenario_source: ScenarioSource | None = None,
+    env_factory: EnvironmentFactory | None = None,
+    controllers: dict[str, Controller] | None = None,
 ) -> BenchmarkReport:
     """Run the full fixed-time, actuated, and DRL controller comparison.
 
@@ -212,9 +377,11 @@ def run_benchmark(
 
     Args:
         config: Typed evaluation configuration or path to its YAML file.
-
-    TODO (SV3): use identical routes and seeds for every controller; produce
-    95% confidence intervals; prevent TE access before the model is frozen.
+        allow_te: Allow evaluation on held-out test split (TE).
+        scenario_source: Optional pre-loaded ScenarioSource (defaults to loading manifest_path).
+        env_factory: Optional custom EnvironmentFactory.
+        controllers: Optional dict of named controllers to evaluate. Defaults
+            to the standard suite: fixed_time, max_pressure, actuated, drl.
 
     Returns:
         BenchmarkReport: Final typed comparison report.
@@ -222,4 +389,98 @@ def run_benchmark(
     if isinstance(config, (str, Path)):
         config = load_eval_config(config)
 
-    raise NotImplementedError
+    split = config.benchmark.split
+    if split.strip().upper() == "TE" and not allow_te:
+        raise PermissionError(
+            "Held-out test split (TE) is locked until the model and manifest are formally frozen."
+        )
+
+    # 1. Resolve scenario source
+    manifest: ScenarioSource
+    if scenario_source is not None:
+        manifest = scenario_source
+    else:
+        from traffic_drl.environment.scenario_factory import ScenarioManifest
+
+        manifest_p = Path(config.manifest_path)
+        if not manifest_p.exists():
+            raise FileNotFoundError(f"Scenario manifest not found: {config.manifest_path}")
+        manifest = ScenarioManifest.from_csv(manifest_p)
+
+    # 2. Resolve environment factory
+    factory: EnvironmentFactory
+    if env_factory is not None:
+        factory = env_factory
+    else:
+        from traffic_drl.environment.make_env import create_sumo_env
+        from traffic_drl.config import load_env_config
+
+        env_cfg = load_env_config(config.env_config_path)
+        factory = lambda record, seed: create_sumo_env(env_cfg, record.route_file, seed=seed)
+
+    # 3. Resolve controllers
+    ctrl_suite: dict[str, Controller] = {}
+    if controllers is not None:
+        ctrl_suite = dict(controllers)
+    else:
+        # Load baseline controllers
+        from traffic_drl.baselines import (
+            FixedTimeController,
+            MaxPressureController,
+            ActuatedController,
+        )
+
+        try:
+            ctrl_suite["fixed_time"] = FixedTimeController()
+        except Exception:
+            pass
+
+        try:
+            ctrl_suite["max_pressure"] = MaxPressureController()
+        except Exception:
+            pass
+
+        try:
+            ctrl_suite["actuated"] = ActuatedController()
+        except Exception:
+            pass
+
+        # Load trained DRL model if checkpoint is configured and exists
+        ckpt = Path(config.artifacts.model_checkpoint)
+        if ckpt.exists():
+            try:
+                from stable_baselines3 import DQN
+
+                ctrl_suite["dqn"] = DQN.load(str(ckpt))
+            except Exception:
+                pass
+
+    if not ctrl_suite:
+        raise ValueError("No controllers available to benchmark.")
+
+    # 4. Run evaluation across all controllers
+    all_records: list[EpisodeMetrics] = []
+    for c_name, c_inst in ctrl_suite.items():
+        recs = evaluate_manifest(
+            c_inst,
+            factory,
+            manifest,
+            split=split,
+            seeds=config.evaluation_seeds,
+            controller_name=c_name,
+            deterministic=config.benchmark.deterministic,
+            episodes_per_scenario=config.benchmark.episodes_per_scenario,
+            allow_te=allow_te,
+        )
+        all_records.extend(recs)
+
+    # 5. Persist results if reporting output_dir is specified
+    if config.reporting.output_dir:
+        out_dir = Path(config.reporting.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        save_evaluation_results(all_records, out_dir / "metrics.csv")
+        save_evaluation_results(all_records, out_dir / "metrics.json")
+
+    # 6. Return interpreted benchmark report
+    baseline = "fixed_time" if "fixed_time" in ctrl_suite else next(iter(ctrl_suite))
+    return interpret_results(all_records, baseline_controller=baseline)

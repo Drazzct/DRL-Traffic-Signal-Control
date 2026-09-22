@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import gymnasium as gym
+import numpy as np
 import pytest
 
 from traffic_drl.contracts import (
@@ -11,6 +13,7 @@ from traffic_drl.contracts import (
     ScenarioRecord,
     ScenarioSource,
     SmokeTestResult,
+    StepMetrics,
 )
 from traffic_drl.evaluation import (
     ADDITIONAL_METRICS,
@@ -29,8 +32,12 @@ from traffic_drl.evaluation import (
     plot_learning_curve,
     plot_metric_comparison,
     plot_queue_heatmap,
+    plot_step_evaluation_dashboard,
+    plot_step_metric_timeseries,
+    run_benchmark,
     run_smoke_test,
     save_evaluation_results,
+    save_step_metrics,
     standard_metric_names,
 )
 
@@ -271,22 +278,27 @@ def test_merge_tripinfo_metrics(tmp_path: Path) -> None:
 # ==========================================
 
 
-class MockSpace:
-    def sample(self) -> int:
-        return 0
-
-
-class MockGymEnv:
+class MockGymEnv(gym.Env):
     def __init__(self, max_steps: int = 5) -> None:
+        super().__init__()
         self.max_steps = max_steps
         self.step_count = 0
-        self.action_space = MockSpace()
-        self.observation_space = MockSpace()
+        self.action_space = gym.spaces.Discrete(2)
+        self.observation_space = gym.spaces.Box(
+            low=0.0, high=1.0, shape=(4,), dtype=np.float32
+        )
         self.is_closed = False
 
-    def reset(self, *, seed: int | None = None) -> tuple[int, dict[str, Any]]:
+    def reset(
+        self,
+        *,
+        seed: int | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        super().reset(seed=seed)
         self.step_count = 0
-        return 0, {
+        obs = np.zeros(4, dtype=np.float32)
+        return obs, {
             "average_waiting_time": 5.0,
             "average_queue_length": 2.0,
             "time_loss": 10.0,
@@ -294,9 +306,10 @@ class MockGymEnv:
             "min_green_violations": 0,
         }
 
-    def step(self, action: Any) -> tuple[int, float, bool, bool, dict[str, Any]]:
+    def step(self, action: Any) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         self.step_count += 1
-        done = self.step_count >= self.max_steps
+        terminated = self.step_count >= self.max_steps
+        truncated = False
         info = {
             "average_waiting_time": 5.0 + self.step_count,
             "average_queue_length": 2.0,
@@ -304,7 +317,8 @@ class MockGymEnv:
             "throughput": 80.0,
             "min_green_violations": 0,
         }
-        return 0, 1.0, done, False, info
+        obs = np.zeros(4, dtype=np.float32)
+        return obs, 1.0, terminated, truncated, info
 
     def close(self) -> None:
         self.is_closed = True
@@ -527,3 +541,166 @@ def test_run_smoke_test() -> None:
     assert result.terminated is True
     assert len(result.rewards) == 4
     assert env.is_closed is True
+
+
+def test_run_benchmark(tmp_path: Path) -> None:
+    """Run benchmark with mock manifest, env factory, and controllers."""
+    from traffic_drl.config import (
+        ArtifactsConfig,
+        BenchmarkConfig,
+        EvalConfig,
+        EvalNormalisationConfig,
+        ReportingConfig,
+    )
+    from traffic_drl.contracts import BenchmarkReport
+
+    cfg = EvalConfig(
+        benchmark=BenchmarkConfig(
+            name="test_bench",
+            split="VA",
+            deterministic=True,
+            episodes_per_scenario=1,
+        ),
+        env_config_path="configs/environment/dev_single_intersection.yaml",
+        manifest_path="dummy.csv",
+        checksum_file="dummy.sha256",
+        evaluation_seeds=[42],
+        scenarios=["VA-01"],
+        artifacts=ArtifactsConfig(
+            model_checkpoint="",
+            vec_normalize_stats="",
+        ),
+        normalisation=EvalNormalisationConfig(
+            training=False,
+            norm_reward=False,
+        ),
+        reporting=ReportingConfig(
+            output_dir=str(tmp_path / "benchmark_out"),
+            save_tripinfo=False,
+        ),
+    )
+
+    records = [
+        ScenarioRecord(
+            scenario_id="VA-01",
+            split="VA",
+            route_file=Path("dummy_va.rou.xml"),
+            demand_seed=1,
+            sumo_seed=1,
+            num_seconds=100,
+        ),
+    ]
+    manifest = MockManifest(records)
+    env_factory = lambda rec, seed: MockGymEnv(max_steps=3)
+    controllers = {"fixed_time": MockController(), "test_ctrl": MockController()}
+
+    report = run_benchmark(
+        config=cfg,
+        scenario_source=manifest,
+        env_factory=env_factory,
+        controllers=controllers,
+    )
+
+    assert isinstance(report, BenchmarkReport)
+    assert report.baseline_controller == "fixed_time"
+    assert len(report.summaries) == 2
+    assert (tmp_path / "benchmark_out" / "metrics.csv").exists()
+    assert (tmp_path / "benchmark_out" / "metrics.json").exists()
+
+
+# ==========================================
+# 6. Step-Level Evaluation & Dynamics Tests
+# ==========================================
+
+
+def test_evaluate_controller_step_metrics() -> None:
+    """Check evaluate_controller populates fine-grained step metrics."""
+    env = MockGymEnv(max_steps=4)
+    ctrl = MockController()
+    step_records: list[StepMetrics] = []
+
+    metrics = evaluate_controller(
+        controller=ctrl,
+        env=env,
+        controller_name="test_ctrl",
+        scenario_id="SCEN-01",
+        seed=100,
+        step_metrics_collector=step_records,
+    )
+
+    assert len(metrics) == 1
+    assert len(step_records) == 4
+    for r in step_records:
+        assert isinstance(r, StepMetrics)
+        assert r.controller == "test_ctrl"
+        assert r.scenario_id == "SCEN-01"
+        assert r.seed == 100
+
+    last_step = step_records[-1]
+    assert last_step.cumulative_reward == 4.0
+    assert last_step.accumulated_waiting_time > 0.0
+
+
+def test_save_step_metrics_csv_and_json(tmp_path: Path) -> None:
+    """Check serialising step metrics to CSV and JSON files."""
+    records = [
+        StepMetrics(
+            step=5.0 * i,
+            controller="ppo",
+            scenario_id="TEST",
+            seed=42,
+            episode=0,
+            queue_length=float(i),
+            waiting_time=float(i * 2),
+            accumulated_waiting_time=float(i * (i + 1)),
+            mean_speed=10.0,
+            reward=1.0,
+            cumulative_reward=float(i + 1),
+            action=0,
+        )
+        for i in range(3)
+    ]
+
+    csv_out = tmp_path / "steps.csv"
+    save_step_metrics(records, csv_out)
+    assert csv_out.exists()
+    content = csv_out.read_text(encoding="utf-8")
+    assert "accumulated_waiting_time" in content
+    assert "ppo" in content
+
+    json_out = tmp_path / "steps.json"
+    save_step_metrics(records, json_out)
+    assert json_out.exists()
+    assert json_out.stat().st_size > 0
+
+
+def test_plot_step_evaluation_dashboard_and_timeseries(tmp_path: Path) -> None:
+    """Render 4-panel dashboard and single metric timeseries from step metrics."""
+    records = [
+        StepMetrics(
+            step=float(t * 5),
+            controller="ppo" if t % 2 == 0 else "fixed_time",
+            scenario_id="SCEN-01",
+            seed=42,
+            episode=0,
+            queue_length=float(t * 2),
+            waiting_time=float(t * 3),
+            accumulated_waiting_time=float(t * 10),
+            mean_speed=12.0 - t * 0.5,
+            reward=0.5,
+            cumulative_reward=float(t),
+            action=0,
+        )
+        for t in range(5)
+    ]
+
+    dash_png = tmp_path / "dashboard.png"
+    plot_step_evaluation_dashboard(records, output_path=dash_png)
+    assert dash_png.exists()
+    assert dash_png.stat().st_size > 0
+
+    ts_png = tmp_path / "accumulated_waiting.png"
+    plot_step_metric_timeseries(records, "accumulated_waiting_time", output_path=ts_png)
+    assert ts_png.exists()
+    assert ts_png.stat().st_size > 0
+
