@@ -6,6 +6,11 @@ network:
 traffic_light:
   ts_id: <validated_tls_id>
   single_agent: true
+  # SUMO tlLogic programID to activate.
+  # null → use the first program SUMO loads (default sumo-rl behaviour).
+  # Set to a specific string (e.g. "rl") to select a named program defined
+  # in the net file or additional file without editing the XML.
+  program_id: null
 timing:
   num_seconds: 900
   delta_time: 5

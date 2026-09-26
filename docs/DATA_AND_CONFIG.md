@@ -33,6 +33,7 @@ network:
 traffic_light:
   ts_id: junction_id
   single_agent: true
+  program_id: null
 timing:
   num_seconds: 3600
   delta_time: 5
@@ -61,8 +62,17 @@ environment:
   env_config_path: configs/environment/dev_single_intersection.yaml
   manifest_path: scenarios/scenario_manifest.csv
 reward:
-  type: queue_loss
-  params: {}
+  type: combined
+  params:
+    wait_weight: 1.5
+    queue_weight: 2.0
+    flicker_weight: 1.0
+    lambda_f: 0.99
+    delta_time: 10
+    v_stall: 0.1
+    t_stall_limit: 120.0
+    deadlock_penalty: 5.0
+    max_wait_time: 60.0
   wrappers: {}
 normalization:
   norm_obs: true
