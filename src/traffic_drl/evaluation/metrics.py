@@ -170,15 +170,17 @@ def confidence_interval(
 
 def aggregate_metrics(
     records: Iterable[EpisodeMetrics],
+    confidence: float = 0.95,
 ) -> tuple[MetricSummary, ...]:
     """Aggregate per-episode records by (controller, scenario_id) group.
 
-    For each group, computes mean, standard deviation, and 95% confidence
+    For each group, computes mean, standard deviation, and confidence
     interval for every metric in :func:`standard_metric_names`.
 
     Args:
         records: Typed episode results collected with matched scenario/seed
             settings across all controllers.
+        confidence: Confidence level for computing confidence intervals (default: 0.95).
 
     Returns:
         tuple[MetricSummary, ...]: One aggregate per (controller, scenario_id) group.
@@ -208,7 +210,7 @@ def aggregate_metrics(
                 standard_deviations[key] = math.sqrt(var)
             else:
                 standard_deviations[key] = 0.0
-            confidence_intervals[key] = confidence_interval(float_vals, confidence=0.95)
+            confidence_intervals[key] = confidence_interval(float_vals, confidence=confidence)
 
         summaries.append(
             MetricSummary(

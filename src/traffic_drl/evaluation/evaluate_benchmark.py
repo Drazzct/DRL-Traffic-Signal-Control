@@ -65,6 +65,7 @@ def evaluate_controller(
     tripinfo_path: str | Path | None = None,
     model: Controller | None = None,
     step_metrics_collector: list[StepMetrics] | None = None,
+    episode_index_offset: int = 0,
 ) -> list[EpisodeMetrics]:
     """Roll out one controller and collect standard traffic metrics.
 
@@ -188,7 +189,7 @@ def evaluate_controller(
                         controller=controller_name,
                         scenario_id=scenario_id,
                         seed=current_seed,
-                        episode=ep,
+                        episode=ep + episode_index_offset,
                         queue_length=step_stopped,
                         waiting_time=step_waiting,
                         accumulated_waiting_time=running_cum_waiting,

@@ -12,7 +12,8 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from traffic_drl.contracts import EpisodeMetrics
+from traffic_drl.baselines.fixed_time import FixedTimeController
+from traffic_drl.contracts import EpisodeMetrics, StepMetrics
 from traffic_drl.evaluation import (
     aggregate_metrics,
     evaluate_controller,
@@ -121,8 +122,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--compare-baseline",
-        action="store_true",
-        help="Also evaluate Fixed-Time baseline on identical seed/route to plot comparative step curves.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Compare evaluated controller with Fixed-Time baseline on matching seeds (default: True). Use --no-compare-baseline to disable.",
     )
 
     # Output paths
@@ -131,6 +133,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("outputs/results"),
         help="Directory where evaluation metrics CSV and plots will be saved (default: outputs/results).",
+    )
+    parser.add_argument(
+        "--confidence",
+        type=float,
+        default=0.95,
+        help="Confidence level for computing confidence intervals (default: 0.95 for 95%% CI).",
     )
 
     return parser.parse_args()
@@ -205,37 +213,34 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # Configure tripinfo and emissions output directory
-    run_id = generate_run_id(prefix=f"eval_{args.controller}", run_type="test")
-    tripinfo_dir, results_dir, *_ = ensure_run_directories(run_id)
-    tripinfo_xml = get_tripinfo_path(run_id)
-    emissions_xml = get_emissions_path(run_id)
-
-    gui_options = f" --delay {args.delay}" if (args.gui and args.delay > 0) else ""
-    additional_sumo_cmd = (
-        f"--tripinfo-output {tripinfo_xml.as_posix()} "
-        f"--emission-output {emissions_xml.as_posix()} "
-        f"--no-step-log true --duration-log.disable true --no-warnings true{gui_options}"
-    )
-
-    print(f"[+] Initializing SUMO-RL (duration: {args.num_seconds}s, GUI: {args.gui})...")
-    try:
-        env = gym.make(
+    def create_env(
+        ep_seed: int,
+        tripinfo_file: Path,
+        emissions_file: Path,
+        use_gui: bool = False,
+        fixed_ts: bool = False,
+    ) -> gym.Env:
+        gui_options = f" --delay {args.delay}" if (use_gui and args.delay > 0) else ""
+        cmd = (
+            f"--tripinfo-output {tripinfo_file.as_posix()} "
+            f"--emission-output {emissions_file.as_posix()} "
+            f"--no-step-log true --duration-log.disable true --no-warnings true{gui_options}"
+        )
+        return gym.make(
             "sumo-rl-v0",
             net_file=str(args.net),
             route_file=str(args.rou),
-            use_gui=args.gui,
+            use_gui=use_gui,
             num_seconds=args.num_seconds,
-            additional_sumo_cmd=additional_sumo_cmd,
+            sumo_seed=ep_seed,
+            fixed_ts=fixed_ts,
+            additional_sumo_cmd=cmd,
             single_agent=True,
         )
-    except Exception as exc:
-        print(f"\n[!] Error starting SUMO environment: {exc}", file=sys.stderr)
-        print("Note: Ensure SUMO is installed and SUMO_HOME environment variable is set.", file=sys.stderr)
-        print("If you already ran SUMO and have tripinfo.xml, use: --tripinfo <path_to_tripinfo.xml>", file=sys.stderr)
-        sys.exit(1)
 
-    # Controller selection
+    # Controller selection and model loading
+    sb3_model = None
+    default_name = "model_agent"
     if args.model_path and args.model_path.exists():
         print(f"[+] Loading SB3 model from {args.model_path}...")
         try:
@@ -263,167 +268,147 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         except Exception as exc:
             print(f"Error loading model: {exc}", file=sys.stderr)
             sys.exit(1)
+    else:
+        controller_name = args.controller
 
-        # Optional VecNormalize
-        vec_norm = None
-        if args.vec_normalize:
+    class DRLControllerWrapper:
+        """Adapter wrapping SB3 model with optional VecNormalize for evaluate_controller."""
+
+        def __init__(self, raw_model, normalizer=None):
+            self.raw_model = raw_model
+            self.normalizer = normalizer
+
+        def predict(self, obs, deterministic: bool = True):
+            if self.normalizer is not None:
+                obs = self.normalizer.normalize_obs(obs)
+            action, _ = self.raw_model.predict(obs, deterministic=deterministic)
+            if isinstance(action, np.ndarray):
+                if action.ndim == 0:
+                    return int(action)
+                elif action.size == 1:
+                    return int(action.item())
+            return action
+
+        def reset(self):
+            if hasattr(self.raw_model, "reset"):
+                self.raw_model.reset()
+
+    class BaselineController:
+        def __init__(self, action_space):
+            self.action_space = action_space
+
+        def predict(self, obs, deterministic=True):
+            return self.action_space.sample()
+
+    scenario_id = args.rou.stem
+    records: list[EpisodeMetrics] = []
+    step_records: list[StepMetrics] = []
+    vec_norm = None
+
+    print(f"\n[+] Running evaluation for {controller_name} ({args.episodes} episode(s), each in an independent SUMO session)...")
+
+    for ep in range(args.episodes):
+        ep_seed = args.seed + ep
+        ep_run_id = generate_run_id(prefix=f"eval_{controller_name}_ep{ep}", run_type="test")
+        _, _, *_ = ensure_run_directories(ep_run_id)
+        ep_tripinfo = get_tripinfo_path(ep_run_id)
+        ep_emissions = get_emissions_path(ep_run_id)
+
+        print(f"  -> Episode {ep + 1}/{args.episodes} (Seed: {ep_seed})...")
+        is_fixed = (sb3_model is None and controller_name == "fixed_time")
+        try:
+            env = create_env(ep_seed, ep_tripinfo, ep_emissions, use_gui=args.gui, fixed_ts=is_fixed)
+        except Exception as exc:
+            print(f"\n[!] Error starting SUMO environment for episode {ep + 1}: {exc}", file=sys.stderr)
+            print("Note: Ensure SUMO is installed and SUMO_HOME environment variable is set.", file=sys.stderr)
+            sys.exit(1)
+
+        # Optional VecNormalize loaded once on the first environment
+        if vec_norm is None and args.vec_normalize:
             if not args.vec_normalize.exists():
                 print(f"Error: VecNormalize file '{args.vec_normalize}' not found.", file=sys.stderr)
                 sys.exit(1)
-            print(f"[+] Loading VecNormalize statistics from {args.vec_normalize}...")
+            print(f"  [+] Loading VecNormalize statistics from {args.vec_normalize}...")
             try:
                 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-
                 dummy_venv = DummyVecEnv([lambda: env])
                 vec_norm = VecNormalize.load(str(args.vec_normalize), dummy_venv)
-                # Crucial: Freeze normalization stats and disable reward norm during evaluation
                 vec_norm.training = False
                 vec_norm.norm_reward = False
-                print("[+] VecNormalize statistics loaded and frozen (training=False, norm_reward=False).")
+                print("  [+] VecNormalize statistics loaded and frozen (training=False, norm_reward=False).")
             except Exception as exc:
                 print(f"Error loading VecNormalize: {exc}", file=sys.stderr)
                 sys.exit(1)
 
-        class DRLControllerWrapper:
-            """Adapter wrapping SB3 model with optional VecNormalize for evaluate_controller."""
-
-            def __init__(self, raw_model, normalizer=None):
-                self.raw_model = raw_model
-                self.normalizer = normalizer
-
-            def predict(self, obs, deterministic: bool = True):
-                if self.normalizer is not None:
-                    obs = self.normalizer.normalize_obs(obs)
-                action, _ = self.raw_model.predict(obs, deterministic=deterministic)
-                if isinstance(action, np.ndarray):
-                    if action.ndim == 0:
-                        return int(action)
-                    elif action.size == 1:
-                        return int(action.item())
-                return action
-
-            def reset(self):
-                if hasattr(self.raw_model, "reset"):
-                    self.raw_model.reset()
-
-        model = DRLControllerWrapper(sb3_model, normalizer=vec_norm)
-    else:
-        controller_name = args.controller
-
-        class BaselineController:
-            def __init__(self, action_space):
-                self.action_space = action_space
-
-            def predict(self, obs, deterministic=True):
-                return self.action_space.sample()
-
-        model = BaselineController(env.action_space)
-
-    scenario_id = args.rou.stem
-    step_records = []
-    print(f"[+] Running evaluation ({args.episodes} episode(s))...")
-    records = evaluate_controller(
-        controller=model,
-        env=env,
-        controller_name=controller_name,
-        scenario_id=scenario_id,
-        seed=args.seed,
-        episodes=args.episodes,
-        step_metrics_collector=step_records if args.plot_steps else None,
-    )
-    env.close()
-
-    # Parse tripinfo & emissions if generated
-    if tripinfo_xml.exists():
-        t_metrics = parse_tripinfo(tripinfo_xml, episode_seconds=args.num_seconds)
-        e_metrics = (
-            parse_emissions(emissions_xml)
-            if emissions_xml.exists()
-            else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
-        )
-        if records:
-            new_records = []
-            for rec in records:
-                avg_q = rec.average_queue_length
-                p_rate = rec.phase_switch_rate
-                if (avg_q == 0.0 or p_rate == 0.0) and step_records:
-                    ctrl_steps = [s for s in step_records if s.controller == rec.controller]
-                    if ctrl_steps and avg_q == 0.0:
-                        avg_q = float(np.mean([s.queue_length for s in ctrl_steps]))
-                    if ctrl_steps and p_rate == 0.0:
-                        actions = [s.action for s in ctrl_steps if s.action is not None]
-                        if len(actions) > 1:
-                            switches = sum(1 for i in range(1, len(actions)) if actions[i] != actions[i - 1])
-                            p_rate = float(switches / len(actions))
-
-                new_records.append(
-                    EpisodeMetrics(
-                        controller=rec.controller,
-                        scenario_id=rec.scenario_id,
-                        seed=rec.seed,
-                        average_waiting_time=t_metrics.average_waiting_time,
-                        average_queue_length=avg_q,
-                        time_loss=t_metrics.average_time_loss,
-                        throughput=t_metrics.throughput,
-                        phase_switch_rate=p_rate,
-                        min_green_violations=rec.min_green_violations,
-                        travel_time=t_metrics.average_travel_time,
-                        fuel=e_metrics.fuel / len(records) if e_metrics.fuel is not None else None,
-                        co2=e_metrics.co2 / len(records) if e_metrics.co2 is not None else None,
-                        nox=e_metrics.nox / len(records) if e_metrics.nox is not None else None,
-                        inference_latency=rec.inference_latency,
-                    )
-                )
-            records = new_records
+        if sb3_model is not None:
+            model = DRLControllerWrapper(sb3_model, normalizer=vec_norm)
+        elif controller_name == "fixed_time":
+            model = FixedTimeController()
         else:
+            model = BaselineController(env.action_space)
+
+        ep_recs = evaluate_controller(
+            controller=model,
+            env=env,
+            controller_name=controller_name,
+            scenario_id=scenario_id,
+            seed=ep_seed,
+            episodes=1,
+            step_metrics_collector=step_records if args.plot_steps else None,
+            episode_index_offset=ep,
+        )
+        env.close()
+
+        if ep_tripinfo.exists():
+            t_m = parse_tripinfo(ep_tripinfo, episode_seconds=args.num_seconds)
+            e_m = (
+                parse_emissions(ep_emissions)
+                if ep_emissions.exists()
+                else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
+            )
+            sim_rec = ep_recs[0] if ep_recs else None
             merged = merge_tripinfo_metrics(
-                t_metrics,
-                e_metrics,
+                t_m,
+                e_m,
                 controller=controller_name,
                 scenario_id=scenario_id,
-                seed=args.seed,
+                seed=ep_seed,
+                average_queue_length=sim_rec.average_queue_length if sim_rec else 0.0,
+                phase_switch_rate=sim_rec.phase_switch_rate if sim_rec else 0.0,
+                min_green_violations=sim_rec.min_green_violations if sim_rec else 0,
+                inference_latency=sim_rec.inference_latency if sim_rec else None,
             )
-            records = [merged]
+            records.append(merged)
+        else:
+            records.extend(ep_recs)
 
     # Optional Baseline Comparison for side-by-side benchmarking
     if args.compare_baseline and controller_name != "fixed_time":
-        print(f"\n[+] Running Fixed-Time Baseline on same scenario & seed for comparison...")
-        try:
-            base_run_id = generate_run_id(prefix="eval_baseline_fixed_time", run_type="test")
+        print(f"\n[+] Running Fixed-Time Baseline ({args.episodes} episode(s), matching seeds)...")
+        for ep in range(args.episodes):
+            base_ep_seed = args.seed + ep
+            base_run_id = generate_run_id(prefix=f"eval_baseline_fixed_time_ep{ep}", run_type="test")
             _, _, *_ = ensure_run_directories(base_run_id)
             base_tripinfo = get_tripinfo_path(base_run_id)
             base_emissions = get_emissions_path(base_run_id)
-            base_cmd = (
-                f"--tripinfo-output {base_tripinfo.as_posix()} "
-                f"--emission-output {base_emissions.as_posix()} "
-                f"--no-step-log true --duration-log.disable true --no-warnings true"
-            )
-            base_env = gym.make(
-                "sumo-rl-v0",
-                net_file=str(args.net),
-                route_file=str(args.rou),
-                use_gui=False,
-                num_seconds=args.num_seconds,
-                additional_sumo_cmd=base_cmd,
-                single_agent=True,
-            )
 
-            class BaselineController:
-                def __init__(self, action_space):
-                    self.action_space = action_space
+            print(f"  -> Baseline Episode {ep + 1}/{args.episodes} (Seed: {base_ep_seed})...")
+            try:
+                base_env = create_env(base_ep_seed, base_tripinfo, base_emissions, use_gui=False, fixed_ts=True)
+            except Exception as exc:
+                print(f"[!] Warning: Could not run baseline simulation: {exc}", file=sys.stderr)
+                break
 
-                def predict(self, obs, deterministic=True):
-                    return self.action_space.sample()
-
-            base_model = BaselineController(base_env.action_space)
-            base_recs = evaluate_controller(
+            base_model = FixedTimeController()
+            base_ep_recs = evaluate_controller(
                 controller=base_model,
                 env=base_env,
                 controller_name="fixed_time",
                 scenario_id=scenario_id,
-                seed=args.seed,
-                episodes=args.episodes,
+                seed=base_ep_seed,
+                episodes=1,
                 step_metrics_collector=step_records if args.plot_steps else None,
+                episode_index_offset=ep,
             )
             base_env.close()
 
@@ -434,57 +419,26 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
                     if base_emissions.exists()
                     else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
                 )
-                if base_recs:
-                    new_base_recs = []
-                    for b_rec in base_recs:
-                        avg_q = b_rec.average_queue_length
-                        p_rate = b_rec.phase_switch_rate
-                        if (avg_q == 0.0 or p_rate == 0.0) and step_records:
-                            ctrl_steps = [s for s in step_records if s.controller == "fixed_time"]
-                            if ctrl_steps and avg_q == 0.0:
-                                avg_q = float(np.mean([s.queue_length for s in ctrl_steps]))
-                            if ctrl_steps and p_rate == 0.0:
-                                actions = [s.action for s in ctrl_steps if s.action is not None]
-                                if len(actions) > 1:
-                                    switches = sum(1 for i in range(1, len(actions)) if actions[i] != actions[i - 1])
-                                    p_rate = float(switches / len(actions))
-
-                        new_base_recs.append(
-                            EpisodeMetrics(
-                                controller=b_rec.controller,
-                                scenario_id=b_rec.scenario_id,
-                                seed=b_rec.seed,
-                                average_waiting_time=t_m.average_waiting_time,
-                                average_queue_length=avg_q,
-                                time_loss=t_m.average_time_loss,
-                                throughput=t_m.throughput,
-                                phase_switch_rate=p_rate,
-                                min_green_violations=b_rec.min_green_violations,
-                                travel_time=t_m.average_travel_time,
-                                fuel=e_m.fuel / len(base_recs) if e_m.fuel is not None else None,
-                                co2=e_m.co2 / len(base_recs) if e_m.co2 is not None else None,
-                                nox=e_m.nox / len(base_recs) if e_m.nox is not None else None,
-                                inference_latency=b_rec.inference_latency,
-                            )
-                        )
-                    base_recs = new_base_recs
-                else:
-                    merged_base = merge_tripinfo_metrics(
-                        t_m,
-                        e_m,
-                        controller="fixed_time",
-                        scenario_id=scenario_id,
-                        seed=args.seed,
-                    )
-                    base_recs = [merged_base]
-
-            records.extend(base_recs)
-            print("[+] Baseline evaluation completed.")
-        except Exception as exc:
-            print(f"[!] Warning: Could not run baseline comparison: {exc}", file=sys.stderr)
+                b_sim = base_ep_recs[0] if base_ep_recs else None
+                merged_base = merge_tripinfo_metrics(
+                    t_m,
+                    e_m,
+                    controller="fixed_time",
+                    scenario_id=scenario_id,
+                    seed=base_ep_seed,
+                    average_queue_length=b_sim.average_queue_length if b_sim else 0.0,
+                    phase_switch_rate=b_sim.phase_switch_rate if b_sim else 0.0,
+                    min_green_violations=b_sim.min_green_violations if b_sim else 0,
+                    inference_latency=b_sim.inference_latency if b_sim else None,
+                )
+                records.append(merged_base)
+            else:
+                records.extend(base_ep_recs)
+        print("[+] Baseline evaluation completed.")
 
     # Aggregate & display
-    summaries = aggregate_metrics(records)
+    summaries = aggregate_metrics(records, confidence=args.confidence)
+    ci_label = f"{int(args.confidence * 100)}% CI"
     for s in summaries:
         print("\n==========================================")
         print(f"Controller : {s.controller}")
@@ -493,7 +447,7 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         print("------------------------------------------")
         for metric, mean_val in s.means.items():
             ci = s.confidence_intervals.get(metric, (mean_val, mean_val))
-            print(f"  {metric:<24}: {mean_val:>10.2f} (95% CI: [{ci[0]:.2f}, {ci[1]:.2f}])")
+            print(f"  {metric:<24}: {mean_val:>10.2f} ({ci_label}: [{ci[0]:.2f}, {ci[1]:.2f}])")
         print("==========================================")
 
     # Save CSV & plot
@@ -504,7 +458,15 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
 
     out_plot = args.output_dir / "waiting_time_comparison.png"
     plot_metric_comparison(records, "average_waiting_time", output_path=out_plot)
-    print(f"[OK] Summary comparison plot saved to: {out_plot}")
+    print(f"[OK] Waiting time comparison plot saved to: {out_plot}")
+
+    out_queue_plot = args.output_dir / "queue_comparison.png"
+    plot_metric_comparison(records, "average_queue_length", output_path=out_queue_plot)
+    print(f"[OK] Queue comparison plot saved to: {out_queue_plot}")
+
+    out_loss_plot = args.output_dir / "time_loss_comparison.png"
+    plot_metric_comparison(records, "time_loss", output_path=out_loss_plot)
+    print(f"[OK] Time loss comparison plot saved to: {out_loss_plot}")
 
     # Step-level timeline metrics and diagrams
     if args.plot_steps and step_records:
