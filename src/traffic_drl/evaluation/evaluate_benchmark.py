@@ -118,6 +118,9 @@ def evaluate_controller(
 
         running_cum_waiting = 0.0
         running_cum_reward = 0.0
+        episode_queues: list[float] = []
+        phase_switches = 0
+        prev_action = None
 
         while not (terminated or truncated):
             t0 = time.perf_counter()
@@ -158,14 +161,27 @@ def evaluate_controller(
                 )
 
             running_cum_waiting += step_waiting
+            episode_queues.append(step_stopped)
+
+            act_val = None
+            if isinstance(action, (int, np.integer)):
+                act_val = int(action)
+            elif isinstance(action, np.ndarray) and action.size == 1:
+                act_val = int(action.item())
+            elif isinstance(action, (list, tuple)) and len(action) == 1:
+                act_val = action[0]
+            else:
+                act_val = action
+
+            if prev_action is not None:
+                if isinstance(act_val, np.ndarray):
+                    if not np.array_equal(act_val, prev_action):
+                        phase_switches += 1
+                elif act_val != prev_action:
+                    phase_switches += 1
+            prev_action = act_val
 
             if step_metrics_collector is not None:
-                act_val = None
-                if isinstance(action, (int, np.integer)):
-                    act_val = int(action)
-                elif isinstance(action, np.ndarray) and action.size == 1:
-                    act_val = int(action.item())
-
                 step_metrics_collector.append(
                     StepMetrics(
                         step=sim_step_sec,
@@ -179,7 +195,7 @@ def evaluate_controller(
                         mean_speed=step_mean_speed,
                         reward=step_reward,
                         cumulative_reward=running_cum_reward,
-                        action=act_val,
+                        action=act_val if isinstance(act_val, int) else None,
                     )
                 )
 
@@ -188,6 +204,16 @@ def evaluate_controller(
 
         if latencies:
             last_info["inference_latency"] = float(np.mean(latencies))
+
+        if ("average_queue_length" not in last_info or last_info["average_queue_length"] == 0.0) and episode_queues:
+            mean_q = float(np.mean(episode_queues))
+            if mean_q > 0.0 or "average_queue_length" not in last_info:
+                last_info["average_queue_length"] = mean_q
+
+        if ("phase_switch_rate" not in last_info or last_info["phase_switch_rate"] == 0.0) and step_count > 0:
+            rate = float(phase_switches / step_count)
+            if rate > 0.0 or "phase_switch_rate" not in last_info:
+                last_info["phase_switch_rate"] = rate
 
         # Check tripinfo XML if provided
         if tripinfo_path is not None and Path(tripinfo_path).exists():

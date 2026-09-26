@@ -272,6 +272,22 @@ def test_merge_tripinfo_metrics(tmp_path: Path) -> None:
     assert ep_m.co2 == 50.0
     assert ep_m.nox == 2.0
 
+    ep_m2 = merge_tripinfo_metrics(
+        t_m,
+        e_m,
+        controller="baseline",
+        scenario_id="DEV-00",
+        seed=5,
+        average_queue_length=3.5,
+        phase_switch_rate=0.08,
+        min_green_violations=1,
+        inference_latency=0.005,
+    )
+    assert ep_m2.average_queue_length == 3.5
+    assert ep_m2.phase_switch_rate == 0.08
+    assert ep_m2.min_green_violations == 1
+    assert ep_m2.inference_latency == 0.005
+
 
 # ==========================================
 # 3. Benchmark Runner & Mock Tests
@@ -368,6 +384,52 @@ def test_evaluate_controller() -> None:
     assert records[0].scenario_id == "DEV-00"
     assert records[0].seed == 10
     assert records[1].seed == 11
+
+
+def test_evaluate_controller_computes_queue_and_switches() -> None:
+    """evaluate_controller should compute queue length and switch rate from step metrics when not in info."""
+    class StepOnlyEnv(gym.Env):
+        def __init__(self, max_steps: int = 4) -> None:
+            super().__init__()
+            self.max_steps = max_steps
+            self.step_count = 0
+            self.action_space = gym.spaces.Discrete(2)
+            self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(4,), dtype=np.float32)
+
+        def reset(self, *, seed=None, options=None):
+            self.step_count = 0
+            return np.zeros(4, dtype=np.float32), {}
+
+        def step(self, action):
+            self.step_count += 1
+            terminated = self.step_count >= self.max_steps
+            info = {
+                "system_total_stopped": float(self.step_count * 2),  # queues: 2, 4, 6, 8 -> mean 5.0
+                "system_total_waiting_time": 10.0,
+            }
+            return np.zeros(4, dtype=np.float32), 1.0, terminated, False, info
+
+    class AlternatingController:
+        def __init__(self):
+            self.last_act = 0
+
+        def reset(self):
+            self.last_act = 0
+
+        def predict(self, obs, *, deterministic=True):
+            self.last_act = 1 - self.last_act
+            return self.last_act
+
+    env = StepOnlyEnv(max_steps=4)
+    controller = AlternatingController()
+    records = evaluate_controller(controller, env, controller_name="alt_ctrl", scenario_id="DEV-01", seed=42)
+
+    assert len(records) == 1
+    # Mean of [2.0, 4.0, 6.0, 8.0] = 5.0
+    assert records[0].average_queue_length == 5.0
+    # Alternating action each step -> 3 switches in 4 steps -> rate = 3 / 4 = 0.75
+    assert records[0].phase_switch_rate == 0.75
+
 
 
 def test_evaluate_manifest_split_rules() -> None:

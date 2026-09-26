@@ -137,6 +137,10 @@ def merge_tripinfo_metrics(
     controller: str = "unknown",
     scenario_id: str = "unknown",
     seed: int = 0,
+    average_queue_length: float = 0.0,
+    phase_switch_rate: float = 0.0,
+    min_green_violations: int = 0,
+    inference_latency: float | None = None,
 ) -> EpisodeMetrics:
     """Merge traffic and environmental metrics into the standard schema.
 
@@ -146,6 +150,10 @@ def merge_tripinfo_metrics(
         controller: Optional controller name.
         scenario_id: Optional scenario identifier.
         seed: Optional evaluation seed.
+        average_queue_length: Average queue length from simulation steps.
+        phase_switch_rate: Phase switch rate from simulation steps.
+        min_green_violations: Number of min green violations.
+        inference_latency: Optional model inference latency in seconds.
 
     Returns:
         EpisodeMetrics: Combined record ready for controller/scenario metadata
@@ -156,13 +164,15 @@ def merge_tripinfo_metrics(
         scenario_id=scenario_id,
         seed=seed,
         average_waiting_time=tripinfo.average_waiting_time,
-        average_queue_length=0.0,
+        average_queue_length=average_queue_length,
         time_loss=tripinfo.average_time_loss,
         throughput=tripinfo.throughput,
-        phase_switch_rate=0.0,
-        min_green_violations=0,
+        phase_switch_rate=phase_switch_rate,
+        min_green_violations=min_green_violations,
         travel_time=tripinfo.average_travel_time,
         fuel=emissions.fuel,
         co2=emissions.co2,
         nox=emissions.nox,
+        inference_latency=inference_latency,
     )
+

@@ -12,6 +12,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from traffic_drl.contracts import EpisodeMetrics
 from traffic_drl.evaluation import (
     aggregate_metrics,
     evaluate_controller,
@@ -340,14 +341,49 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
             if emissions_xml.exists()
             else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
         )
-        merged = merge_tripinfo_metrics(
-            t_metrics,
-            e_metrics,
-            controller=controller_name,
-            scenario_id=scenario_id,
-            seed=args.seed,
-        )
-        records = [merged]
+        if records:
+            new_records = []
+            for rec in records:
+                avg_q = rec.average_queue_length
+                p_rate = rec.phase_switch_rate
+                if (avg_q == 0.0 or p_rate == 0.0) and step_records:
+                    ctrl_steps = [s for s in step_records if s.controller == rec.controller]
+                    if ctrl_steps and avg_q == 0.0:
+                        avg_q = float(np.mean([s.queue_length for s in ctrl_steps]))
+                    if ctrl_steps and p_rate == 0.0:
+                        actions = [s.action for s in ctrl_steps if s.action is not None]
+                        if len(actions) > 1:
+                            switches = sum(1 for i in range(1, len(actions)) if actions[i] != actions[i - 1])
+                            p_rate = float(switches / len(actions))
+
+                new_records.append(
+                    EpisodeMetrics(
+                        controller=rec.controller,
+                        scenario_id=rec.scenario_id,
+                        seed=rec.seed,
+                        average_waiting_time=t_metrics.average_waiting_time,
+                        average_queue_length=avg_q,
+                        time_loss=t_metrics.average_time_loss,
+                        throughput=t_metrics.throughput,
+                        phase_switch_rate=p_rate,
+                        min_green_violations=rec.min_green_violations,
+                        travel_time=t_metrics.average_travel_time,
+                        fuel=e_metrics.fuel / len(records) if e_metrics.fuel is not None else None,
+                        co2=e_metrics.co2 / len(records) if e_metrics.co2 is not None else None,
+                        nox=e_metrics.nox / len(records) if e_metrics.nox is not None else None,
+                        inference_latency=rec.inference_latency,
+                    )
+                )
+            records = new_records
+        else:
+            merged = merge_tripinfo_metrics(
+                t_metrics,
+                e_metrics,
+                controller=controller_name,
+                scenario_id=scenario_id,
+                seed=args.seed,
+            )
+            records = [merged]
 
     # Optional Baseline Comparison for side-by-side benchmarking
     if args.compare_baseline and controller_name != "fixed_time":
@@ -398,14 +434,49 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
                     if base_emissions.exists()
                     else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
                 )
-                merged_base = merge_tripinfo_metrics(
-                    t_m,
-                    e_m,
-                    controller="fixed_time",
-                    scenario_id=scenario_id,
-                    seed=args.seed,
-                )
-                base_recs = [merged_base]
+                if base_recs:
+                    new_base_recs = []
+                    for b_rec in base_recs:
+                        avg_q = b_rec.average_queue_length
+                        p_rate = b_rec.phase_switch_rate
+                        if (avg_q == 0.0 or p_rate == 0.0) and step_records:
+                            ctrl_steps = [s for s in step_records if s.controller == "fixed_time"]
+                            if ctrl_steps and avg_q == 0.0:
+                                avg_q = float(np.mean([s.queue_length for s in ctrl_steps]))
+                            if ctrl_steps and p_rate == 0.0:
+                                actions = [s.action for s in ctrl_steps if s.action is not None]
+                                if len(actions) > 1:
+                                    switches = sum(1 for i in range(1, len(actions)) if actions[i] != actions[i - 1])
+                                    p_rate = float(switches / len(actions))
+
+                        new_base_recs.append(
+                            EpisodeMetrics(
+                                controller=b_rec.controller,
+                                scenario_id=b_rec.scenario_id,
+                                seed=b_rec.seed,
+                                average_waiting_time=t_m.average_waiting_time,
+                                average_queue_length=avg_q,
+                                time_loss=t_m.average_time_loss,
+                                throughput=t_m.throughput,
+                                phase_switch_rate=p_rate,
+                                min_green_violations=b_rec.min_green_violations,
+                                travel_time=t_m.average_travel_time,
+                                fuel=e_m.fuel / len(base_recs) if e_m.fuel is not None else None,
+                                co2=e_m.co2 / len(base_recs) if e_m.co2 is not None else None,
+                                nox=e_m.nox / len(base_recs) if e_m.nox is not None else None,
+                                inference_latency=b_rec.inference_latency,
+                            )
+                        )
+                    base_recs = new_base_recs
+                else:
+                    merged_base = merge_tripinfo_metrics(
+                        t_m,
+                        e_m,
+                        controller="fixed_time",
+                        scenario_id=scenario_id,
+                        seed=args.seed,
+                    )
+                    base_recs = [merged_base]
 
             records.extend(base_recs)
             print("[+] Baseline evaluation completed.")
