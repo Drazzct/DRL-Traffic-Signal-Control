@@ -11,6 +11,33 @@ from traffic_drl.contracts import ResumeInfo
 from .checkpointing import save_checkpoint
 
 
+class CurriculumCallback(BaseCallback):
+    """Synchronize curriculum timestep unlocks across scenario samplers."""
+
+    def __init__(self, scenario_sampler=None, verbose: int = 0) -> None:
+        super().__init__(verbose=verbose)
+        self.scenario_sampler = scenario_sampler
+
+    def _samplers(self, obj):
+        sampler = getattr(obj, "scenario_sampler", None)
+        if sampler is not None and hasattr(sampler, "set_timestep"):
+            yield sampler
+
+        envs = getattr(obj, "envs", None)
+        if envs is not None:
+            for env in envs:
+                yield from self._samplers(env)
+
+        unwrapped = getattr(obj, "env", None)
+        if unwrapped is not None and unwrapped is not obj:
+            yield from self._samplers(unwrapped)
+
+    def _on_step(self) -> bool:
+        if self.scenario_sampler is not None:
+            self.scenario_sampler.set_timestep(self.num_timesteps)
+        return True
+
+
 class RobustCheckpointCallback(BaseCallback):
     """Maintain exactly two checkpoint directories: ``last/`` and ``best/``.
 

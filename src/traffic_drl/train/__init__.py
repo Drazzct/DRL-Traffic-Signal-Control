@@ -27,6 +27,7 @@ from traffic_drl.train.checkpointing import (
     read_resume_info,
 )
 from traffic_drl.train.callbacks import (
+    CurriculumCallback,
     RobustCheckpointCallback,
     TrafficMetricsCallback,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "load_checkpoint",
     "read_resume_info",
     # Callbacks
+    "CurriculumCallback",
     "RobustCheckpointCallback",
     "TrafficMetricsCallback",
     # DQN

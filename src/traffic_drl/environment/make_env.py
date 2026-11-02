@@ -370,6 +370,8 @@ def make_vectorized_environment(
                 manifest=scenario_sampler.manifest,
                 allowed_split=scenario_sampler.allowed_split,
                 seed=None if sampler_seed is None else sampler_seed + rank,
+                difficulty_unlock_timesteps=scenario_sampler.difficulty_unlock_timesteps,
+                _shared_timestep=scenario_sampler._shared_timestep,
             )
 
         env = create_sumo_env(
