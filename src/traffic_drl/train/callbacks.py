@@ -35,6 +35,11 @@ class CurriculumCallback(BaseCallback):
     def _on_step(self) -> bool:
         if self.scenario_sampler is not None:
             self.scenario_sampler.set_timestep(self.num_timesteps)
+        if hasattr(self.training_env, "env_method"):
+            self.training_env.env_method(
+                "set_curriculum_timestep",
+                self.num_timesteps,
+            )
         return True
 
 

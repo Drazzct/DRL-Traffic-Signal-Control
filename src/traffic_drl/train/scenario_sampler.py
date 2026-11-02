@@ -19,8 +19,6 @@ Typical usage
 from __future__ import annotations
 
 import random
-from multiprocessing import Value
-from multiprocessing.sharedctypes import Synchronized
 
 from traffic_drl.contracts import ScenarioRecord, ScenarioSource
 
@@ -47,7 +45,6 @@ class ScenarioSampler:
         allowed_split: str,
         seed: int | None = None,
         difficulty_unlock_timesteps: tuple[int, ...] | list[int] | dict[int, int] | None = None,
-        _shared_timestep: Synchronized | None = None,
     ) -> None:
         """Create a sampler restricted to one manifest split.
 
@@ -73,9 +70,6 @@ class ScenarioSampler:
             difficulty_unlock_timesteps
         )
         self._current_timestep = 0
-        if _shared_timestep is None and difficulty_unlock_timesteps is not None:
-            _shared_timestep = Value("q", 0)
-        self._shared_timestep = _shared_timestep
 
         # Validate that the split has at least one record.
         self._pool: tuple[ScenarioRecord, ...] = tuple(
@@ -152,7 +146,6 @@ class ScenarioSampler:
 
     @property
     def current_difficulty(self) -> str:
-        self._sync_shared_timestep()
         if self.difficulty_unlock_timesteps is None:
             return "1"
         unlocked = [
@@ -166,18 +159,7 @@ class ScenarioSampler:
         if timestep < 0:
             raise ValueError("timestep must be non-negative.")
         self._current_timestep = timestep
-        if self._shared_timestep is not None:
-            with self._shared_timestep.get_lock():
-                self._shared_timestep.value = timestep
         if self.difficulty_unlock_timesteps is not None:
-            self._refresh_curriculum_pool()
-
-    def _sync_shared_timestep(self) -> None:
-        if self._shared_timestep is None:
-            return
-        timestep = int(self._shared_timestep.value)
-        if timestep != self._current_timestep:
-            self._current_timestep = timestep
             self._refresh_curriculum_pool()
 
     def sample(self, *, seed: int | None = None) -> ScenarioRecord:
@@ -192,7 +174,6 @@ class ScenarioSampler:
             ScenarioRecord: One record from :attr:`allowed_split`.
         """
         rng = random.Random(seed) if seed is not None else self._rng
-        self._sync_shared_timestep()
         pool = getattr(self, "_sampling_pool", self._pool)
         if not pool:
             raise ValueError(
