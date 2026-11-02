@@ -6,7 +6,7 @@ network:
 traffic_light:
   ts_id: "traffic_light"
   single_agent: true
-  program_id: null
+  program_id: 1
 timing:
   num_seconds: 3600
   delta_time: 5

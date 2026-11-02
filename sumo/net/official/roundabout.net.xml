@@ -205,6 +205,73 @@
         <phase duration="3"  state="rrrryyyyyy"/>
     </tlLogic>
 
+    <tlLogic id="traffic_light" type="static" programID="1" offset="0">
+        <phase duration="27" state="rrrrrrrrrr"/>
+        <phase duration="3"  state="rrrrrrrrrr"/>
+        <phase duration="27" state="rrrrrrrrGG"/>
+        <phase duration="3"  state="rrrrrrrryy"/>
+        <phase duration="27" state="rrrrrrGGrr"/>
+        <phase duration="3"  state="rrrrrrGGrr"/>
+        <phase duration="27" state="rrrrrrGGGG"/>
+        <phase duration="3"  state="rrrrrryyyy"/>
+        <phase duration="27" state="rrrrGGrrrr"/>
+        <phase duration="3"  state="rrrrGGrrrr"/>
+        <phase duration="27" state="rrrrGGrrGG"/>
+        <phase duration="3"  state="rrrrGGrryy"/>
+        <phase duration="27" state="rrrrGGGGrr"/>
+        <phase duration="3"  state="rrrrGGGGrr"/>
+        <phase duration="27" state="rrrrGGGGGG"/>
+        <phase duration="3"  state="rrrryyyyyy"/>
+        <phase duration="27" state="rrGGrrrrrr"/>
+        <phase duration="3"  state="rrGGrrrrrr"/>
+        <phase duration="27" state="rrGGrrrrGG"/>
+        <phase duration="3"  state="rrGGrrrryy"/>
+        <phase duration="27" state="rrGGrrGGrr"/>
+        <phase duration="3"  state="rrGGrrGGrr"/>
+        <phase duration="27" state="rrGGrrGGGG"/>
+        <phase duration="3"  state="rrGGrryyyy"/>
+        <phase duration="27" state="rrGGGGrrrr"/>
+        <phase duration="3"  state="rrGGGGrrrr"/>
+        <phase duration="27" state="rrGGGGrrGG"/>
+        <phase duration="3"  state="rrGGGGrryy"/>
+        <phase duration="27" state="rrGGGGGGrr"/>
+        <phase duration="3"  state="rrGGGGGGrr"/>
+        <phase duration="27" state="rrGGGGGGGG"/>
+        <phase duration="3"  state="rryyyyyyyy"/>
+        <phase duration="27" state="GGrrrrrrrr"/>
+        <phase duration="3"  state="GGrrrrrrrr"/>
+        <phase duration="27" state="GGrrrrrrGG"/>
+        <phase duration="3"  state="GGrrrrrryy"/>
+        <phase duration="27" state="GGrrrrGGrr"/>
+        <phase duration="3"  state="GGrrrrGGrr"/>
+        <phase duration="27" state="GGrrrrGGGG"/>
+        <phase duration="3"  state="GGrrrryyyy"/>
+        <phase duration="27" state="GGrrGGrrrr"/>
+        <phase duration="3"  state="GGrrGGrrrr"/>
+        <phase duration="27" state="GGrrGGrrGG"/>
+        <phase duration="3"  state="GGrrGGrryy"/>
+        <phase duration="27" state="GGrrGGGGrr"/>
+        <phase duration="3"  state="GGrrGGGGrr"/>
+        <phase duration="27" state="GGrrGGGGGG"/>
+        <phase duration="3"  state="GGrryyyyyy"/>
+        <phase duration="27" state="GGGGrrrrrr"/>
+        <phase duration="3"  state="GGGGrrrrrr"/>
+        <phase duration="27" state="GGGGrrrrGG"/>
+        <phase duration="3"  state="GGGGrrrryy"/>
+        <phase duration="27" state="GGGGrrGGrr"/>
+        <phase duration="3"  state="GGGGrrGGrr"/>
+        <phase duration="27" state="GGGGrrGGGG"/>
+        <phase duration="3"  state="GGGGrryyyy"/>
+        <phase duration="27" state="GGGGGGrrrr"/>
+        <phase duration="3"  state="GGGGGGrrrr"/>
+        <phase duration="27" state="GGGGGGrrGG"/>
+        <phase duration="3"  state="GGGGGGrryy"/>
+        <phase duration="27" state="GGGGGGGGrr"/>
+        <phase duration="3"  state="GGGGGGGGrr"/>
+        <phase duration="27" state="GGGGGGGGGG"/>
+        <phase duration="3"  state="yyyyyyyyyy"/>
+    </tlLogic>
+
     <junction id="-26234" type="dead_end" x="0.18" y="322.31" incLanes="" intLanes="" shape="0.38,327.31 -0.02,317.31"/>
     <junction id="12724813740" type="dead_end" x="50.48" y="0.00" incLanes="A6_B_0 A6_B_1" intLanes="" shape="45.51,0.57 55.45,-0.57"/>
     <junction id="2498090913" type="dead_end" x="490.12" y="245.42" incLanes="A2_B_0 A2_B_1" intLanes="" shape="488.67,240.64 491.57,250.20"/>
