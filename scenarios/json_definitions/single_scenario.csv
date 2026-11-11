@@ -1,0 +1,2 @@
+scenario_id,split,route_file,demand_seed,sumo_seed,num_seconds,difficulty
+42_weekend_am_0900_relaxed,TR,scenarios/sumo_definitions/42_weekend_am_0900_relaxed.rou.xml,113,113,3600,1
