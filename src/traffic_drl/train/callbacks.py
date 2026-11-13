@@ -2,12 +2,45 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 from pathlib import Path
 
 from stable_baselines3.common.callbacks import BaseCallback
 
 from traffic_drl.contracts import ResumeInfo
 from .checkpointing import save_checkpoint
+
+
+class CurriculumCallback(BaseCallback):
+    """Synchronize curriculum timestep unlocks across scenario samplers."""
+
+    def __init__(self, scenario_sampler=None, verbose: int = 0) -> None:
+        super().__init__(verbose=verbose)
+        self.scenario_sampler = scenario_sampler
+
+    def _samplers(self, obj):
+        sampler = getattr(obj, "scenario_sampler", None)
+        if sampler is not None and hasattr(sampler, "set_timestep"):
+            yield sampler
+
+        envs = getattr(obj, "envs", None)
+        if envs is not None:
+            for env in envs:
+                yield from self._samplers(env)
+
+        unwrapped = getattr(obj, "env", None)
+        if unwrapped is not None and unwrapped is not obj:
+            yield from self._samplers(unwrapped)
+
+    def _on_step(self) -> bool:
+        if self.scenario_sampler is not None:
+            self.scenario_sampler.set_timestep(self.num_timesteps)
+        if hasattr(self.training_env, "env_method"):
+            self.training_env.env_method(
+                "set_curriculum_timestep",
+                self.num_timesteps,
+            )
+        return True
 
 
 class RobustCheckpointCallback(BaseCallback):
@@ -46,6 +79,16 @@ class RobustCheckpointCallback(BaseCallback):
         # Best-metric tracking state
         self._best_reward: float = -math.inf
         self._best_waiting_time: float = math.inf
+        self._episode_rewards: deque[float] = deque(maxlen=100)
+
+    def _init_callback(self) -> None:
+        episode_buffer = getattr(self.model, "ep_info_buffer", None)
+        window_size = getattr(episode_buffer, "maxlen", None)
+        if episode_buffer is not None and window_size is not None:
+            self._episode_rewards = deque(
+                (float(episode["r"]) for episode in episode_buffer if "r" in episode),
+                maxlen=window_size,
+            )
 
     def _get_vec_normalize_env(self):
         """Return the VecNormalize wrapper if applicable, else None."""
@@ -82,22 +125,22 @@ class RobustCheckpointCallback(BaseCallback):
         Uses episode reward mean as the primary metric (higher is better).
         On tie, uses average_waiting_time as a tiebreaker (lower is better).
         """
-        # Read current episode reward from SB3's internal logger
-        # ep_rew_mean is populated after the first episode completes
-        if not hasattr(self.model, "logger") or self.model.logger is None:
-            return
-
-        # SB3 stores name_to_value in the logger's internal dict
-        log_dict = getattr(self.model.logger, "name_to_value", {})
-        current_reward = log_dict.get("rollout/ep_rew_mean")
-        if current_reward is None:
-            return
-
-        # Read waiting time from the most recent info (if available)
-        current_waiting = math.inf
+        completed_episodes = []
+        waiting_times = []
         for info in self.locals.get("infos", []):
+            episode = info.get("episode")
+            if episode is None or "r" not in episode:
+                continue
+            completed_episodes.append(episode)
+            self._episode_rewards.append(float(episode["r"]))
             if "average_waiting_time" in info:
-                current_waiting = info["average_waiting_time"]
+                waiting_times.append(float(info["average_waiting_time"]))
+
+        if not completed_episodes or not self._episode_rewards:
+            return
+
+        current_reward = sum(self._episode_rewards) / len(self._episode_rewards)
+        current_waiting = sum(waiting_times) / len(waiting_times) if waiting_times else math.inf
 
         # Compare: higher reward is better; on tie, lower waiting time wins
         is_better = False
@@ -131,16 +174,29 @@ class RobustCheckpointCallback(BaseCallback):
 
 
 class TrafficMetricsCallback(BaseCallback):
-    """Copy episode traffic metrics from ``info`` into SB3's logger."""
+    """Aggregate episode traffic metrics from all vector envs into SB3's logger."""
 
     def _on_step(self) -> bool:
-        """Log waiting, queue, timeLoss, throughput and control metrics.
+        """Log the mean of each metric reported by workers on this vector step.
 
         Returns:
             bool: ``True`` to continue training; ``False`` to stop training.
         """
-        for info in self.locals.get("infos", []):
-            for metric in ("average_waiting_time", "average_queue_length", "time_loss", "throughput", "phase_switch_rate", "min_green_violations"):
-                if metric in info:
-                    self.logger.record(f"traffic/{metric}", info[metric])
+        infos = self.locals.get("infos", [])
+        for worker_index, info in enumerate(infos):
+            if "episode" in info and "scenario_id" in info:
+                tag = "scenario/id" if len(infos) == 1 else f"scenario/id/env_{worker_index}"
+                self.logger.record(tag, str(info["scenario_id"]))
+
+        metrics = (
+            "average_waiting_time",
+            "average_queue_length",
+            "throughput",
+            "phase_switch_rate",
+            "min_green_violations",
+        )
+        for metric in metrics:
+            values = [float(info[metric]) for info in infos if metric in info]
+            if values:
+                self.logger.record(f"traffic/{metric}", math.fsum(values) / len(values))
         return True

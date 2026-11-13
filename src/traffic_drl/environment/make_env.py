@@ -42,9 +42,13 @@ from traffic_drl.environment.all_red_env import AllRedSumoEnvironment
 # module can be imported even when stable-baselines3 is not installed.
 # At runtime the real types are resolved inside the functions that use them.
 try:
-    from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize  # type: ignore[import]
+    from stable_baselines3.common.vec_env import (  # type: ignore[import]
+        DummyVecEnv,
+        SubprocVecEnv,
+        VecNormalize,
+    )
 
-    VecEnv = DummyVecEnv | VecNormalize
+    VecEnv = DummyVecEnv | SubprocVecEnv | VecNormalize
 except ModuleNotFoundError:
     VecEnv = None  # type: ignore[assignment,misc]
 
@@ -103,8 +107,8 @@ def build_reward_fn(reward_config: RewardConfig) -> Union[str, Callable]:
 def create_sumo_env(
     config: EnvConfig | str | Path,
     route_file: str | Path,
-    run_id: str,
-    base_dir: Path,
+    run_id: str = "run_default",
+    base_dir: Path | str = Path("outputs/runs"),
     *,
     fixed_ts: bool = False,
     seed: int | None = None,
@@ -172,14 +176,25 @@ def create_sumo_env(
     if not Path(route_file).exists():
         raise FileNotFoundError(f"SUMO route file not found: {route_file}")
 
+    # Load observation topology defaults from config if not explicitly provided
+    if not approach_ids and hasattr(config, "observation_features") and config.observation_features.approach_ids:
+        approach_ids = config.observation_features.approach_ids
+    if not ring_segment_ids and hasattr(config, "observation_features") and config.observation_features.ring_segment_ids:
+        ring_segment_ids = config.observation_features.ring_segment_ids
+    if (not vehicle_classes or tuple(vehicle_classes) == ("passenger", "bus", "truck")) and hasattr(config, "observation_features") and config.observation_features.vehicle_classes:
+        vehicle_classes = config.observation_features.vehicle_classes
+
     additional_cmd = [
         config.sumo_options.additional_sumo_cmd,
         "--lateral-resolution",
         str(config.sumo_options.lateral_resolution),
     ]
 
+    if config.network.additional_files and "-a" not in config.sumo_options.additional_sumo_cmd and "--additional-files" not in config.sumo_options.additional_sumo_cmd:
+        additional_cmd.extend(["-a", ",".join(str(f) for f in config.network.additional_files)])
+
     # Create directories before assigning paths
-    tripinfo_dir, results_dir, _, _ = r_id.ensure_run_directories(run_id, base_dir)
+    tripinfo_dir, results_dir, _, _ = r_id.ensure_run_directories(run_id, Path(base_dir))
 
     if config.sumo_options.save_tripinfo:
         tripinfo_path = tripinfo_dir / "tripinfo.xml"
@@ -189,7 +204,7 @@ def create_sumo_env(
         additional_cmd.append("--emission-output")
         additional_cmd.append(str(emissions_path))
 
-    cmds = " ".join(additional_cmd)
+    cmds = " ".join(part for part in additional_cmd if part)
     
     env_kwargs = dict(
         net_file=config.network.net_file,
@@ -202,6 +217,7 @@ def create_sumo_env(
         delta_time=config.timing.delta_time,
         yellow_time=config.timing.yellow_time,
         red_time=config.timing.red_time,
+        enforce_max_green=config.timing.enforce_max_green,
         sumo_seed=seed if seed is not None else "random",
         fixed_ts=fixed_ts,
         reward_fn=reward_fn,
@@ -279,8 +295,8 @@ def make_dev_environment(
 def make_vectorized_environment(
     config: EnvConfig | str | Path,
     route_file: str | Path,
-    run_id: str,
-    base_dir: Path,
+    run_id: str = "run_default",
+    base_dir: Path | str = Path("outputs/runs"),
     *,
     fixed_ts: bool = False,
     seed: int | None = None,
@@ -294,13 +310,15 @@ def make_vectorized_environment(
     norm_reward: bool = True,
     clip_obs: float = 10.0,
     clip_reward: float = 10.0,
+    n_envs: int = 1,
+    start_method: str | None = None,
     approach_ids: Sequence[str] = (),
     ring_segment_ids: Sequence[str] = (),
     vehicle_classes: Sequence[str] = ("passenger", "bus", "truck"),
     vec_normalize: str | Path | None = None,
     **kwargs,
-) -> "DummyVecEnv | VecNormalize":
-    """Create a ``DummyVecEnv`` and optional ``VecNormalize`` wrapper for SB3.
+) -> "DummyVecEnv | SubprocVecEnv | VecNormalize":
+    """Create an SB3 vector environment and optional ``VecNormalize`` wrapper.
 
     The returned object is the ``env`` argument accepted by
     :func:`~traffic_drl.train.train_dqn.build_dqn_model`.
@@ -322,6 +340,8 @@ def make_vectorized_environment(
         norm_reward: Wrap with ``VecNormalize`` and normalise rewards.
         clip_obs: Maximum absolute value for normalised observations.
         clip_reward: Maximum absolute value for normalised rewards.
+        n_envs: Number of environments; values above one use ``SubprocVecEnv``.
+        start_method: Multiprocessing start method for ``SubprocVecEnv``.
         approach_ids: Incoming edge IDs passed to the custom observation space.
         ring_segment_ids: Ring edges passed to the custom observation space.
         vehicle_classes: Vehicle classes to track in custom observations.
@@ -332,34 +352,60 @@ def make_vectorized_environment(
     (``training=False``, ``norm_reward=False``) for ``VA``/``TE`` evaluation.
 
     Returns:
-        DummyVecEnv | VecNormalize: A single-environment vectorised wrapper,
-        optionally wrapped by ``VecNormalize``.
+        A vectorised environment, optionally wrapped by ``VecNormalize``.
     """
     if isinstance(config, (str, Path)):
         config = load_env_config(config)
 
-    def _make_env():
+    if n_envs < 1:
+        raise ValueError("n_envs must be at least 1")
+
+    def _make_env(rank: int) -> gym.Env:
+        worker_sampler = scenario_sampler
+        if n_envs > 1 and scenario_sampler is not None:
+            sampler_seed = (
+                scenario_sampler.seed if scenario_sampler.seed is not None else seed
+            )
+            worker_sampler = ScenarioSampler(
+                manifest=scenario_sampler.manifest,
+                allowed_split=scenario_sampler.allowed_split,
+                seed=None if sampler_seed is None else sampler_seed + rank,
+                difficulty_unlock_timesteps=scenario_sampler.difficulty_unlock_timesteps,
+            )
+
         env = create_sumo_env(
             config,
             route_file,
-            run_id=run_id,
+            run_id=f"{run_id}_worker_{rank}" if n_envs > 1 else run_id,
             base_dir=base_dir,
             fixed_ts=fixed_ts,
             use_gui=use_gui,
             reward_fn=reward_fn,
             wrap=wrap,
-            scenario_sampler=scenario_sampler,
+            scenario_sampler=worker_sampler,
             custom_observation=custom_observation,
-            seed=seed,
+            seed=None if seed is None else seed + rank,
             approach_ids=approach_ids,
             ring_segment_ids=ring_segment_ids,
             vehicle_classes=vehicle_classes,
             **kwargs,
         )
-        env = Monitor(env)
+        env = Monitor(env, info_keywords=("scenario_id",))
         return env
 
-    env = DummyVecEnv([_make_env])
+    def _make_env_factory(rank: int) -> Callable[[], gym.Env]:
+        def _init() -> gym.Env:
+            return _make_env(rank)
+
+        return _init
+
+    env_fns: list[Callable[[], gym.Env]] = [
+        _make_env_factory(rank) for rank in range(n_envs)
+    ]
+    if n_envs == 1:
+        env = DummyVecEnv(env_fns)
+    else:
+        env = SubprocVecEnv(env_fns, start_method=start_method)
 
 
     if vec_normalize is not None:

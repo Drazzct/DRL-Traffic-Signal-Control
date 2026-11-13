@@ -85,6 +85,7 @@ class TimingConfig:
     max_green: int
     yellow_time: int
     red_time: int
+    enforce_max_green: bool = True
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,17 @@ class ObservationBoundsConfig:
 
     max_queue_per_lane: float
     max_time_in_phase: float
+
+
+@dataclass(frozen=True)
+class ObservationFeaturesConfig:
+    """Topology features for custom MDP observation."""
+
+    approach_ids: list[str] = field(default_factory=list)
+    ring_segment_ids: list[str] = field(default_factory=list)
+    vehicle_classes: list[str] = field(
+        default_factory=lambda: ["passenger", "bus", "truck", "motorcycle"]
+    )
 
 
 @dataclass(frozen=True)
@@ -135,6 +147,10 @@ class EnvConfig:
         observation_bounds:
           max_queue_per_lane: 10.0
           max_time_in_phase: 60.0
+        observation_features:
+          approach_ids: ["A1_A", "A2_A", "A3_A", "A4_A", "A6_A"]
+          ring_segment_ids: ["E13", "E16", "E46", "E24", "E25", "E35"]
+          vehicle_classes: ["passenger", "bus", "truck", "motorcycle"]
     """
 
     network: NetworkConfig
@@ -142,6 +158,9 @@ class EnvConfig:
     timing: TimingConfig
     sumo_options: SumoOptions
     observation_bounds: ObservationBoundsConfig
+    observation_features: ObservationFeaturesConfig = field(
+        default_factory=ObservationFeaturesConfig
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +353,7 @@ def load_env_config(
             max_green=int(timing["max_green"]),
             yellow_time=int(timing["yellow_time"]),
             red_time=int(timing.get("red_time", 0)),
+            enforce_max_green=bool(timing.get("enforce_max_green", True)),
         ),
         sumo_options=SumoOptions(
             use_gui=bool(sumo["use_gui"]),
@@ -344,6 +364,19 @@ def load_env_config(
         observation_bounds=ObservationBoundsConfig(
             max_queue_per_lane=float(obs["max_queue_per_lane"]),
             max_time_in_phase=float(obs["max_time_in_phase"]),
+        ),
+        observation_features=ObservationFeaturesConfig(
+            approach_ids=list(
+                (raw.get("observation_features") or raw.get("observation") or {}).get("approach_ids", [])
+            ),
+            ring_segment_ids=list(
+                (raw.get("observation_features") or raw.get("observation") or {}).get("ring_segment_ids", [])
+            ),
+            vehicle_classes=list(
+                (raw.get("observation_features") or raw.get("observation") or {}).get(
+                    "vehicle_classes", ["passenger", "bus", "truck", "motorcycle"]
+                )
+            ),
         ),
     )
 

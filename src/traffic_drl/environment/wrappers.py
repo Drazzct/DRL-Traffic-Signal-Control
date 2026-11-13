@@ -54,6 +54,10 @@ class MultiScenarioWrapper(gym.Wrapper):
         self.scenario_sampler: "ScenarioSampler" = scenario_sampler
         self.active_scenario: "ScenarioRecord | None" = None
 
+    def set_curriculum_timestep(self, timestep: int) -> None:
+        """Update the sampler running inside this environment process."""
+        self.scenario_sampler.set_timestep(timestep)
+
     def reset(
         self,
         *,
@@ -74,6 +78,7 @@ class MultiScenarioWrapper(gym.Wrapper):
             
         obs, info = super().reset(seed=seed, options=options)
         info["scenario"] = self.active_scenario
+        info["scenario_id"] = self.active_scenario.scenario_id
         return obs, info
 
     def step(
@@ -85,6 +90,7 @@ class MultiScenarioWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = super().step(action)
         if self.active_scenario is not None:
             info["scenario"] = self.active_scenario
+            info["scenario_id"] = self.active_scenario.scenario_id
         return obs, reward, terminated, truncated, info
 
 
