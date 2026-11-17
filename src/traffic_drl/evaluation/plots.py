@@ -77,6 +77,24 @@ def plot_metric_comparison(
     if controllers is not None and "controller" in df.columns:
         df = df[df["controller"].isin(controllers)]
 
+    # Format scenario labels to numbers only so text does not overlap on the x-axis
+    import re
+
+    def _format_scenario_label(scen_val: Any) -> str:
+        s = str(scen_val)
+        m = re.match(r"^(\d+)", s)
+        if m:
+            return m.group(1)
+        digits = re.findall(r"\d+", s)
+        if digits:
+            return digits[0]
+        return s
+
+    x_plot = "scenario_display" if "scenario_id" in df.columns else ("scenario_id" if "scenario_id" in df.columns else df.index)
+    if "scenario_id" in df.columns:
+        df["scenario_display"] = df["scenario_id"].apply(_format_scenario_label)
+        x_plot = "scenario_display"
+
     fig, ax = plt.subplots(figsize=(10, 6))
 
     try:
@@ -84,7 +102,7 @@ def plot_metric_comparison(
 
         sns.barplot(
             data=df,
-            x="scenario_id" if "scenario_id" in df.columns else df.index,
+            x=x_plot,
             y=metric,
             hue="controller" if "controller" in df.columns else None,
             ax=ax,
@@ -94,8 +112,8 @@ def plot_metric_comparison(
         )
     except Exception:
         # Manual matplotlib fallback if seaborn is not available
-        grouped = df.groupby(["scenario_id", "controller"])[metric].agg(["mean", "std"]).reset_index()
-        scenarios = grouped["scenario_id"].unique()
+        grouped = df.groupby([x_plot, "controller"])[metric].agg(["mean", "std"]).reset_index()
+        scenarios = grouped[x_plot].unique()
         ctrls = grouped["controller"].unique()
         import numpy as np
 
@@ -110,8 +128,9 @@ def plot_metric_comparison(
         ax.set_xticklabels(scenarios)
 
     ax.set_title(f"Benchmark Comparison: {metric.replace('_', ' ').title()}", fontsize=14, fontweight="bold")
-    ax.set_xlabel("Scenario", fontsize=12)
+    ax.set_xlabel("Scenario ID", fontsize=12)
     ax.set_ylabel(metric.replace("_", " ").title(), fontsize=12)
+    ax.tick_params(axis="x", labelsize=11)
     ax.grid(axis="y", linestyle="--", alpha=0.7)
     if ax.get_legend():
         ax.legend(title="Controller", frameon=True)
@@ -317,8 +336,11 @@ def plot_step_metric_timeseries(
 
     for idx, ctrl in enumerate(controllers):
         sub = df[df["controller"] == ctrl] if "controller" in df.columns else df
-        # Sort by step to ensure smooth line trajectory
-        sub = sub.sort_values(by="step")
+        # If there are duplicate steps (e.g. multiple episodes), average them by step
+        if sub["step"].duplicated().any():
+            sub = sub.groupby("step", as_index=False)[metric].mean()
+        else:
+            sub = sub.sort_values(by="step")
         color = colors[idx % len(colors)]
         ax.plot(sub["step"], sub[metric], label=ctrl, color=color, linewidth=2)
 
@@ -404,7 +426,10 @@ def plot_step_evaluation_dashboard(
         if col_name in df.columns:
             for idx, ctrl in enumerate(controllers):
                 sub = df[df["controller"] == ctrl] if "controller" in df.columns else df
-                sub = sub.sort_values(by="step")
+                if sub["step"].duplicated().any():
+                    sub = sub.groupby("step", as_index=False)[col_name].mean()
+                else:
+                    sub = sub.sort_values(by="step")
                 color = colors[idx % len(colors)]
                 ax.plot(
                     sub["step"],
