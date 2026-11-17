@@ -36,6 +36,7 @@ class AllRedTrafficSignal(TrafficSignal):
         self.is_red = False
         self._pending_transition = None
         self.program_id = program_id
+        self.enforce_max_green = enforce_max_green
         super().__init__(
             env,
             ts_id,
@@ -43,10 +44,8 @@ class AllRedTrafficSignal(TrafficSignal):
             yellow_time,
             min_green,
             max_green,
-            enforce_max_green,
             begin_time,
             reward_fn,
-            reward_weights,
             sumo,
         )
 

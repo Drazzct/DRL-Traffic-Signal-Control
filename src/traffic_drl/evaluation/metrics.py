@@ -14,9 +14,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from statistics import mean, stdev
-from scipy.stats import t as t_dist  # type: ignore[import]
+import csv
 import math
+from pathlib import Path
+from statistics import mean, stdev
+from typing import Any
+from scipy.stats import t as t_dist  # type: ignore[import]
 
 from traffic_drl.contracts import BenchmarkReport, EpisodeMetrics, MetricSummary
 
@@ -170,15 +173,17 @@ def confidence_interval(
 
 def aggregate_metrics(
     records: Iterable[EpisodeMetrics],
+    confidence: float = 0.95,
 ) -> tuple[MetricSummary, ...]:
     """Aggregate per-episode records by (controller, scenario_id) group.
 
-    For each group, computes mean, standard deviation, and 95% confidence
+    For each group, computes mean, standard deviation, and confidence
     interval for every metric in :func:`standard_metric_names`.
 
     Args:
         records: Typed episode results collected with matched scenario/seed
             settings across all controllers.
+        confidence: Confidence level for computing confidence intervals (default: 0.95).
 
     Returns:
         tuple[MetricSummary, ...]: One aggregate per (controller, scenario_id) group.
@@ -208,7 +213,7 @@ def aggregate_metrics(
                 standard_deviations[key] = math.sqrt(var)
             else:
                 standard_deviations[key] = 0.0
-            confidence_intervals[key] = confidence_interval(float_vals, confidence=0.95)
+            confidence_intervals[key] = confidence_interval(float_vals, confidence=confidence)
 
         summaries.append(
             MetricSummary(
@@ -301,3 +306,211 @@ def interpret_results(
         improvements=improvements,
         constraint_violations=dict(constraint_violations),
     )
+
+
+def generate_comparison_table(
+    records: Iterable[EpisodeMetrics],
+    *,
+    baseline_controller: str = "fixed_time",
+) -> list[dict[str, Any]]:
+    """Build a side-by-side comparison table between controllers and baseline.
+
+    Args:
+        records: Episode metrics collected across controllers and scenarios.
+        baseline_controller: Name of baseline controller (default: "fixed_time").
+
+    Returns:
+        list[dict[str, Any]]: List of dictionary rows suitable for CSV export.
+    """
+    records_list = list(records)
+    summaries = aggregate_metrics(records_list)
+
+    # Group summaries by scenario_id
+    scenarios: list[str] = []
+    by_scen_ctrl: dict[tuple[str, str], MetricSummary] = {}
+    controllers: set[str] = set()
+
+    for s in summaries:
+        if s.scenario_id not in scenarios:
+            scenarios.append(s.scenario_id)
+        controllers.add(s.controller)
+        by_scen_ctrl[(s.scenario_id, s.controller)] = s
+
+    non_baseline_controllers = [c for c in sorted(controllers) if c != baseline_controller]
+    if not non_baseline_controllers:
+        return []
+
+    rows: list[dict[str, Any]] = []
+
+    for non_base in non_baseline_controllers:
+        for scen in scenarios:
+            m_s = by_scen_ctrl.get((scen, non_base))
+            b_s = by_scen_ctrl.get((scen, baseline_controller))
+            if m_s is None or b_s is None:
+                continue
+
+            row: dict[str, Any] = {
+                "scenario_id": scen,
+                "model_controller": non_base,
+                "baseline_controller": baseline_controller,
+                # Primary metrics
+                "waiting_time_model": round(m_s.means.get("average_waiting_time", 0.0), 2),
+                "waiting_time_fixed_time": round(b_s.means.get("average_waiting_time", 0.0), 2),
+                "waiting_time_diff": round(
+                    m_s.means.get("average_waiting_time", 0.0) - b_s.means.get("average_waiting_time", 0.0), 2
+                ),
+                "waiting_time_improvement_pct": (
+                    round(
+                        (b_s.means.get("average_waiting_time", 0.0) - m_s.means.get("average_waiting_time", 0.0))
+                        / b_s.means.get("average_waiting_time", 1.0)
+                        * 100.0,
+                        2,
+                    )
+                    if b_s.means.get("average_waiting_time", 0.0) != 0.0
+                    else 0.0
+                ),
+                "queue_length_model": round(m_s.means.get("average_queue_length", 0.0), 2),
+                "queue_length_fixed_time": round(b_s.means.get("average_queue_length", 0.0), 2),
+                "queue_length_diff": round(
+                    m_s.means.get("average_queue_length", 0.0) - b_s.means.get("average_queue_length", 0.0), 2
+                ),
+                "queue_length_improvement_pct": (
+                    round(
+                        (b_s.means.get("average_queue_length", 0.0) - m_s.means.get("average_queue_length", 0.0))
+                        / b_s.means.get("average_queue_length", 1.0)
+                        * 100.0,
+                        2,
+                    )
+                    if b_s.means.get("average_queue_length", 0.0) != 0.0
+                    else 0.0
+                ),
+                "time_loss_model": round(m_s.means.get("time_loss", 0.0), 2),
+                "time_loss_fixed_time": round(b_s.means.get("time_loss", 0.0), 2),
+                "time_loss_diff": round(
+                    m_s.means.get("time_loss", 0.0) - b_s.means.get("time_loss", 0.0), 2
+                ),
+                "time_loss_improvement_pct": (
+                    round(
+                        (b_s.means.get("time_loss", 0.0) - m_s.means.get("time_loss", 0.0))
+                        / b_s.means.get("time_loss", 1.0)
+                        * 100.0,
+                        2,
+                    )
+                    if b_s.means.get("time_loss", 0.0) != 0.0
+                    else 0.0
+                ),
+                # Constraint metrics
+                "throughput_model": round(m_s.means.get("throughput", 0.0), 2),
+                "throughput_fixed_time": round(b_s.means.get("throughput", 0.0), 2),
+                "throughput_diff": round(
+                    m_s.means.get("throughput", 0.0) - b_s.means.get("throughput", 0.0), 2
+                ),
+                "throughput_improvement_pct": (
+                    round(
+                        (m_s.means.get("throughput", 0.0) - b_s.means.get("throughput", 0.0))
+                        / b_s.means.get("throughput", 1.0)
+                        * 100.0,
+                        2,
+                    )
+                    if b_s.means.get("throughput", 0.0) != 0.0
+                    else 0.0
+                ),
+                "phase_switch_rate_model": round(m_s.means.get("phase_switch_rate", 0.0), 2),
+                "phase_switch_rate_fixed_time": round(b_s.means.get("phase_switch_rate", 0.0), 2),
+                "min_green_violations_model": int(m_s.means.get("min_green_violations", 0)),
+                "min_green_violations_fixed_time": int(b_s.means.get("min_green_violations", 0)),
+                # Supplementary metrics
+                "travel_time_model": round(m_s.means.get("travel_time", 0.0), 2),
+                "travel_time_fixed_time": round(b_s.means.get("travel_time", 0.0), 2),
+                "travel_time_improvement_pct": (
+                    round(
+                        (b_s.means.get("travel_time", 0.0) - m_s.means.get("travel_time", 0.0))
+                        / b_s.means.get("travel_time", 1.0)
+                        * 100.0,
+                        2,
+                    )
+                    if b_s.means.get("travel_time", 0.0) != 0.0
+                    else 0.0
+                ),
+                "fuel_model": round(m_s.means.get("fuel", 0.0), 2),
+                "fuel_fixed_time": round(b_s.means.get("fuel", 0.0), 2),
+                "fuel_improvement_pct": (
+                    round(
+                        (b_s.means.get("fuel", 0.0) - m_s.means.get("fuel", 0.0))
+                        / b_s.means.get("fuel", 1.0)
+                        * 100.0,
+                        2,
+                    )
+                    if b_s.means.get("fuel", 0.0) != 0.0
+                    else 0.0
+                ),
+                "co2_model": round(m_s.means.get("co2", 0.0), 2),
+                "co2_fixed_time": round(b_s.means.get("co2", 0.0), 2),
+                "co2_improvement_pct": (
+                    round(
+                        (b_s.means.get("co2", 0.0) - m_s.means.get("co2", 0.0))
+                        / b_s.means.get("co2", 1.0)
+                        * 100.0,
+                        2,
+                    )
+                    if b_s.means.get("co2", 0.0) != 0.0
+                    else 0.0
+                ),
+                "nox_model": round(m_s.means.get("nox", 0.0), 2),
+                "nox_fixed_time": round(b_s.means.get("nox", 0.0), 2),
+                "nox_improvement_pct": (
+                    round(
+                        (b_s.means.get("nox", 0.0) - m_s.means.get("nox", 0.0))
+                        / b_s.means.get("nox", 1.0)
+                        * 100.0,
+                        2,
+                    )
+                    if b_s.means.get("nox", 0.0) != 0.0
+                    else 0.0
+                ),
+                "inference_latency_model": round(m_s.means.get("inference_latency", 0.0), 6),
+            }
+            rows.append(row)
+
+        # Compute overall average row
+        if rows:
+            overall: dict[str, Any] = {
+                "scenario_id": "OVERALL_AVERAGE",
+                "model_controller": non_base,
+                "baseline_controller": baseline_controller,
+            }
+            for col in list(rows[0].keys()):
+                if col in ("scenario_id", "model_controller", "baseline_controller"):
+                    continue
+                vals = [r[col] for r in rows if r["model_controller"] == non_base and isinstance(r[col], (int, float))]
+                overall[col] = round(sum(vals) / len(vals), 2) if vals else 0.0
+            rows.append(overall)
+
+    return rows
+
+
+def save_comparison_results(
+    records: Iterable[EpisodeMetrics],
+    output_path: str | Path,
+    *,
+    baseline_controller: str = "fixed_time",
+) -> None:
+    """Save side-by-side comparison between evaluated controllers and baseline to CSV.
+
+    Args:
+        records: Episode metrics from simulation or XML parsing.
+        output_path: Path to write the output CSV.
+        baseline_controller: Name of baseline controller (default: "fixed_time").
+    """
+    dest = Path(output_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    table = generate_comparison_table(records, baseline_controller=baseline_controller)
+    if not table:
+        return
+
+    fieldnames = list(table[0].keys())
+    with dest.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in table:
+            writer.writerow(row)

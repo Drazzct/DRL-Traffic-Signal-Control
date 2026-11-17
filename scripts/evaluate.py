@@ -12,6 +12,8 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from traffic_drl.baselines.fixed_time import FixedTimeController
+from traffic_drl.contracts import EpisodeMetrics, StepMetrics
 from traffic_drl.evaluation import (
     aggregate_metrics,
     evaluate_controller,
@@ -21,6 +23,7 @@ from traffic_drl.evaluation import (
     plot_metric_comparison,
     plot_step_evaluation_dashboard,
     plot_step_metric_timeseries,
+    save_comparison_results,
     save_evaluation_results,
     save_step_metrics,
 )
@@ -46,6 +49,38 @@ def parse_args() -> argparse.Namespace:
         "--rou",
         type=Path,
         help="Path to SUMO route XML file (.rou.xml).",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="Path to CSV manifest containing scenarios (e.g. scenarios/json_definitions/selected_scenario.csv).",
+    )
+    parser.add_argument(
+        "--split",
+        type=str,
+        default=None,
+        help="Filter scenarios by manifest split (e.g. 'TE' for test split, 'VA' for validation, 'TR' for train).",
+    )
+    parser.add_argument(
+        "--additional-file",
+        "-a",
+        dest="additional_file",
+        type=Path,
+        default=None,
+        help="Path to SUMO additional XML file (.add.xml), e.g. vtypes.add.xml (auto-detected if omitted).",
+    )
+    parser.add_argument(
+        "--lateral-resolution",
+        type=float,
+        default=1.2,
+        help="SUMO lateral resolution in meters for sublane simulation (default: 1.2).",
+    )
+    parser.add_argument(
+        "--env-config",
+        type=Path,
+        default=None,
+        help="Path to environment YAML config (e.g. configs/environment/roundabout.yaml).",
     )
     parser.add_argument(
         "--tripinfo",
@@ -120,8 +155,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--compare-baseline",
-        action="store_true",
-        help="Also evaluate Fixed-Time baseline on identical seed/route to plot comparative step curves.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Compare evaluated controller with Fixed-Time baseline on matching seeds (default: True). Use --no-compare-baseline to disable.",
     )
 
     # Output paths
@@ -130,6 +166,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("outputs/results"),
         help="Directory where evaluation metrics CSV and plots will be saved (default: outputs/results).",
+    )
+    parser.add_argument(
+        "--confidence",
+        type=float,
+        default=0.95,
+        help="Confidence level for computing confidence intervals (default: 0.95 for 95%% CI).",
     )
 
     return parser.parse_args()
@@ -186,12 +228,41 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
     if not args.net or not args.net.exists():
         print(f"Error: Network file '{args.net}' does not exist.", file=sys.stderr)
         sys.exit(1)
-    if not args.rou or not args.rou.exists():
-        print(f"Error: Route file '{args.rou}' does not exist.", file=sys.stderr)
+
+    scenarios_to_run: list[tuple[str, Path]] = []
+    if args.manifest and args.manifest.exists():
+        import csv
+        with open(args.manifest, mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                s_id = row.get("scenario_id", "").strip()
+                s_split = row.get("split", "").strip().upper()
+                r_file = row.get("route_file", "").strip()
+                if args.split and s_split != args.split.strip().upper():
+                    continue
+                r_path = Path(r_file)
+                if not r_path.is_absolute():
+                    r_path = REPO_ROOT / r_file
+                if not r_path.exists():
+                    candidate = REPO_ROOT / "scenarios" / "sumo_definitions" / f"{s_id}.rou.xml"
+                    if candidate.exists():
+                        r_path = candidate
+                if r_path.exists():
+                    scenarios_to_run.append((s_id, r_path))
+                else:
+                    print(f"[!] Warning: Route file for scenario '{s_id}' not found ({r_path}). Skipping.")
+        print(f"[+] Loaded {len(scenarios_to_run)} scenario(s) from manifest {args.manifest} (split: {args.split or 'ALL'})")
+    elif args.rou and args.rou.exists():
+        scenarios_to_run.append((args.rou.stem, args.rou))
+    else:
+        print("Error: Either a valid --rou file or --manifest must be provided.", file=sys.stderr)
+        sys.exit(1)
+
+    if not scenarios_to_run:
+        print("Error: No valid scenarios found to evaluate.", file=sys.stderr)
         sys.exit(1)
 
     print(f"\n[+] Network file : {args.net}")
-    print(f"[+] Route file   : {args.rou}")
 
     # Check for gymnasium and sumo_rl
     try:
@@ -204,37 +275,84 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # Configure tripinfo and emissions output directory
-    run_id = generate_run_id(prefix=f"eval_{args.controller}", run_type="test")
-    tripinfo_dir, results_dir, *_ = ensure_run_directories(run_id)
-    tripinfo_xml = get_tripinfo_path(run_id)
-    emissions_xml = get_emissions_path(run_id)
+    def create_env(
+        cur_rou: Path,
+        ep_seed: int,
+        tripinfo_file: Path,
+        emissions_file: Path,
+        use_gui: bool = False,
+        fixed_ts: bool = False,
+    ) -> gym.Env:
+        gui_options = f" --delay {args.delay}" if (use_gui and args.delay > 0) else ""
+        add_file_opt = ""
+        add_file = args.additional_file
+        if add_file is None and cur_rou:
+            candidate = cur_rou.parent / "vtypes.add.xml"
+            if candidate.exists():
+                add_file = candidate
+            else:
+                default_vtypes = REPO_ROOT / "scenarios" / "sumo_definitions" / "vtypes.add.xml"
+                if default_vtypes.exists():
+                    add_file = default_vtypes
 
-    gui_options = f" --delay {args.delay}" if (args.gui and args.delay > 0) else ""
-    additional_sumo_cmd = (
-        f"--tripinfo-output {tripinfo_xml.as_posix()} "
-        f"--emission-output {emissions_xml.as_posix()} "
-        f"--no-step-log true --duration-log.disable true --no-warnings true{gui_options}"
-    )
+        if add_file and Path(add_file).exists():
+            add_file_opt = f" -a {Path(add_file).resolve().as_posix()}"
 
-    print(f"[+] Initializing SUMO-RL (duration: {args.num_seconds}s, GUI: {args.gui})...")
-    try:
-        env = gym.make(
+        cmd_base = (
+            f"--tripinfo-output {tripinfo_file.as_posix()} "
+            f"--emission-output {emissions_file.as_posix()} "
+            f"--no-step-log true --duration-log.disable true --no-warnings true{gui_options}{add_file_opt}"
+        )
+        cmd = f"{cmd_base} --lateral-resolution {args.lateral_resolution}"
+
+        # Check if environment configuration is provided or auto-detected
+        env_cfg_path = args.env_config
+        if env_cfg_path is None:
+            if "roundabout" in str(args.net).lower() or (cur_rou and "roundabout" in str(cur_rou).lower()):
+                candidate = REPO_ROOT / "configs" / "environment" / "roundabout.yaml"
+                if candidate.exists():
+                    env_cfg_path = candidate
+
+        if env_cfg_path and Path(env_cfg_path).exists():
+            from traffic_drl.config import load_env_config
+            from traffic_drl.environment.make_env import create_sumo_env
+            from dataclasses import replace
+
+            cfg = load_env_config(env_cfg_path)
+            new_timing = replace(cfg.timing, num_seconds=args.num_seconds)
+            new_network = replace(cfg.network, net_file=str(args.net))
+            new_sumo_opt = replace(
+                cfg.sumo_options,
+                additional_sumo_cmd=cmd_base,
+                lateral_resolution=args.lateral_resolution,
+                use_gui=use_gui,
+            )
+            cfg = replace(cfg, timing=new_timing, network=new_network, sumo_options=new_sumo_opt)
+
+            return create_sumo_env(
+                config=cfg,
+                route_file=cur_rou,
+                seed=ep_seed,
+                fixed_ts=fixed_ts,
+                use_gui=use_gui,
+                custom_observation=True,
+            )
+
+        return gym.make(
             "sumo-rl-v0",
             net_file=str(args.net),
-            route_file=str(args.rou),
-            use_gui=args.gui,
+            route_file=str(cur_rou),
+            use_gui=use_gui,
             num_seconds=args.num_seconds,
-            additional_sumo_cmd=additional_sumo_cmd,
+            sumo_seed=ep_seed,
+            fixed_ts=fixed_ts,
+            additional_sumo_cmd=cmd,
             single_agent=True,
         )
-    except Exception as exc:
-        print(f"\n[!] Error starting SUMO environment: {exc}", file=sys.stderr)
-        print("Note: Ensure SUMO is installed and SUMO_HOME environment variable is set.", file=sys.stderr)
-        print("If you already ran SUMO and have tripinfo.xml, use: --tripinfo <path_to_tripinfo.xml>", file=sys.stderr)
-        sys.exit(1)
 
-    # Controller selection
+    # Controller selection and model loading
+    sb3_model = None
+    default_name = "model_agent"
     if args.model_path and args.model_path.exists():
         print(f"[+] Loading SB3 model from {args.model_path}...")
         try:
@@ -262,158 +380,182 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         except Exception as exc:
             print(f"Error loading model: {exc}", file=sys.stderr)
             sys.exit(1)
-
-        # Optional VecNormalize
-        vec_norm = None
-        if args.vec_normalize:
-            if not args.vec_normalize.exists():
-                print(f"Error: VecNormalize file '{args.vec_normalize}' not found.", file=sys.stderr)
-                sys.exit(1)
-            print(f"[+] Loading VecNormalize statistics from {args.vec_normalize}...")
-            try:
-                from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-
-                dummy_venv = DummyVecEnv([lambda: env])
-                vec_norm = VecNormalize.load(str(args.vec_normalize), dummy_venv)
-                # Crucial: Freeze normalization stats and disable reward norm during evaluation
-                vec_norm.training = False
-                vec_norm.norm_reward = False
-                print("[+] VecNormalize statistics loaded and frozen (training=False, norm_reward=False).")
-            except Exception as exc:
-                print(f"Error loading VecNormalize: {exc}", file=sys.stderr)
-                sys.exit(1)
-
-        class DRLControllerWrapper:
-            """Adapter wrapping SB3 model with optional VecNormalize for evaluate_controller."""
-
-            def __init__(self, raw_model, normalizer=None):
-                self.raw_model = raw_model
-                self.normalizer = normalizer
-
-            def predict(self, obs, deterministic: bool = True):
-                if self.normalizer is not None:
-                    obs = self.normalizer.normalize_obs(obs)
-                action, _ = self.raw_model.predict(obs, deterministic=deterministic)
-                if isinstance(action, np.ndarray):
-                    if action.ndim == 0:
-                        return int(action)
-                    elif action.size == 1:
-                        return int(action.item())
-                return action
-
-            def reset(self):
-                if hasattr(self.raw_model, "reset"):
-                    self.raw_model.reset()
-
-        model = DRLControllerWrapper(sb3_model, normalizer=vec_norm)
     else:
         controller_name = args.controller
 
-        class BaselineController:
-            def __init__(self, action_space):
-                self.action_space = action_space
+    class DRLControllerWrapper:
+        """Adapter wrapping SB3 model with optional VecNormalize for evaluate_controller."""
 
-            def predict(self, obs, deterministic=True):
-                return self.action_space.sample()
+        def __init__(self, raw_model, normalizer=None):
+            self.raw_model = raw_model
+            self.normalizer = normalizer
 
-        model = BaselineController(env.action_space)
+        def predict(self, obs, deterministic: bool = True):
+            if self.normalizer is not None:
+                obs = self.normalizer.normalize_obs(obs)
+            action, _ = self.raw_model.predict(obs, deterministic=deterministic)
+            if isinstance(action, np.ndarray):
+                if action.ndim == 0:
+                    return int(action)
+                elif action.size == 1:
+                    return int(action.item())
+            return action
 
-    scenario_id = args.rou.stem
-    step_records = []
-    print(f"[+] Running evaluation ({args.episodes} episode(s))...")
-    records = evaluate_controller(
-        controller=model,
-        env=env,
-        controller_name=controller_name,
-        scenario_id=scenario_id,
-        seed=args.seed,
-        episodes=args.episodes,
-        step_metrics_collector=step_records if args.plot_steps else None,
-    )
-    env.close()
+        def reset(self):
+            if hasattr(self.raw_model, "reset"):
+                self.raw_model.reset()
 
-    # Parse tripinfo & emissions if generated
-    if tripinfo_xml.exists():
-        t_metrics = parse_tripinfo(tripinfo_xml, episode_seconds=args.num_seconds)
-        e_metrics = (
-            parse_emissions(emissions_xml)
-            if emissions_xml.exists()
-            else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
-        )
-        merged = merge_tripinfo_metrics(
-            t_metrics,
-            e_metrics,
-            controller=controller_name,
-            scenario_id=scenario_id,
-            seed=args.seed,
-        )
-        records = [merged]
+    class BaselineController:
+        def __init__(self, action_space):
+            self.action_space = action_space
 
-    # Optional Baseline Comparison for side-by-side benchmarking
-    if args.compare_baseline and controller_name != "fixed_time":
-        print(f"\n[+] Running Fixed-Time Baseline on same scenario & seed for comparison...")
-        try:
-            base_run_id = generate_run_id(prefix="eval_baseline_fixed_time", run_type="test")
-            _, _, *_ = ensure_run_directories(base_run_id)
-            base_tripinfo = get_tripinfo_path(base_run_id)
-            base_emissions = get_emissions_path(base_run_id)
-            base_cmd = (
-                f"--tripinfo-output {base_tripinfo.as_posix()} "
-                f"--emission-output {base_emissions.as_posix()} "
-                f"--no-step-log true --duration-log.disable true --no-warnings true"
-            )
-            base_env = gym.make(
-                "sumo-rl-v0",
-                net_file=str(args.net),
-                route_file=str(args.rou),
-                use_gui=False,
-                num_seconds=args.num_seconds,
-                additional_sumo_cmd=base_cmd,
-                single_agent=True,
-            )
+        def predict(self, obs, deterministic=True):
+            return self.action_space.sample()
 
-            class BaselineController:
-                def __init__(self, action_space):
-                    self.action_space = action_space
+    records: list[EpisodeMetrics] = []
+    step_records: list[StepMetrics] = []
+    vec_norm = None
 
-                def predict(self, obs, deterministic=True):
-                    return self.action_space.sample()
+    print(f"\n[+] Running evaluation for {controller_name} across {len(scenarios_to_run)} scenario(s) ({args.episodes} episode(s)/scenario)...")
 
-            base_model = BaselineController(base_env.action_space)
-            base_recs = evaluate_controller(
-                controller=base_model,
-                env=base_env,
-                controller_name="fixed_time",
+    for sc_idx, (scenario_id, cur_rou) in enumerate(scenarios_to_run):
+        print(f"\n=======================================================")
+        print(f"[*] Scenario {sc_idx + 1}/{len(scenarios_to_run)}: {scenario_id}")
+        print(f"[*] Route file : {cur_rou}")
+        print(f"=======================================================")
+
+        for ep in range(args.episodes):
+            ep_seed = args.seed + ep
+            ep_run_id = generate_run_id(prefix=f"eval_{controller_name}_{scenario_id}_ep{ep}", run_type="test")
+            _, _, *_ = ensure_run_directories(ep_run_id)
+            ep_tripinfo = get_tripinfo_path(ep_run_id)
+            ep_emissions = get_emissions_path(ep_run_id)
+
+            print(f"  -> [{scenario_id}] Episode {ep + 1}/{args.episodes} (Seed: {ep_seed})...")
+            is_fixed = (sb3_model is None and controller_name == "fixed_time")
+            try:
+                env = create_env(cur_rou, ep_seed, ep_tripinfo, ep_emissions, use_gui=args.gui, fixed_ts=is_fixed)
+            except Exception as exc:
+                print(f"\n[!] Error starting SUMO environment for {scenario_id} ep {ep + 1}: {exc}", file=sys.stderr)
+                print("Note: Ensure SUMO is installed and SUMO_HOME environment variable is set.", file=sys.stderr)
+                sys.exit(1)
+
+            # Optional VecNormalize loaded once on the first environment
+            if vec_norm is None and args.vec_normalize:
+                if not args.vec_normalize.exists():
+                    print(f"Error: VecNormalize file '{args.vec_normalize}' not found.", file=sys.stderr)
+                    sys.exit(1)
+                print(f"  [+] Loading VecNormalize statistics from {args.vec_normalize}...")
+                try:
+                    from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+                    dummy_venv = DummyVecEnv([lambda: env])
+                    vec_norm = VecNormalize.load(str(args.vec_normalize), dummy_venv)
+                    vec_norm.training = False
+                    vec_norm.norm_reward = False
+                    print("  [+] VecNormalize statistics loaded and frozen (training=False, norm_reward=False).")
+                except Exception as exc:
+                    print(f"Error loading VecNormalize: {exc}", file=sys.stderr)
+                    sys.exit(1)
+
+            if sb3_model is not None:
+                model = DRLControllerWrapper(sb3_model, normalizer=vec_norm)
+            elif controller_name == "fixed_time":
+                model = FixedTimeController()
+            else:
+                model = BaselineController(env.action_space)
+
+            ep_recs = evaluate_controller(
+                controller=model,
+                env=env,
+                controller_name=controller_name,
                 scenario_id=scenario_id,
-                seed=args.seed,
-                episodes=args.episodes,
+                seed=ep_seed,
+                episodes=1,
                 step_metrics_collector=step_records if args.plot_steps else None,
+                episode_index_offset=ep,
             )
-            base_env.close()
+            env.close()
 
-            if base_tripinfo.exists():
-                t_m = parse_tripinfo(base_tripinfo, episode_seconds=args.num_seconds)
+            if ep_tripinfo.exists():
+                t_m = parse_tripinfo(ep_tripinfo, episode_seconds=args.num_seconds)
                 e_m = (
-                    parse_emissions(base_emissions)
-                    if base_emissions.exists()
+                    parse_emissions(ep_emissions)
+                    if ep_emissions.exists()
                     else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
                 )
-                merged_base = merge_tripinfo_metrics(
+                sim_rec = ep_recs[0] if ep_recs else None
+                merged = merge_tripinfo_metrics(
                     t_m,
                     e_m,
-                    controller="fixed_time",
+                    controller=controller_name,
                     scenario_id=scenario_id,
-                    seed=args.seed,
+                    seed=ep_seed,
+                    average_queue_length=sim_rec.average_queue_length if sim_rec else 0.0,
+                    phase_switch_rate=sim_rec.phase_switch_rate if sim_rec else 0.0,
+                    min_green_violations=sim_rec.min_green_violations if sim_rec else 0,
+                    inference_latency=sim_rec.inference_latency if sim_rec else None,
                 )
-                base_recs = [merged_base]
+                records.append(merged)
+            else:
+                records.extend(ep_recs)
 
-            records.extend(base_recs)
-            print("[+] Baseline evaluation completed.")
-        except Exception as exc:
-            print(f"[!] Warning: Could not run baseline comparison: {exc}", file=sys.stderr)
+        # Optional Baseline Comparison for side-by-side benchmarking
+        if args.compare_baseline and controller_name != "fixed_time":
+            print(f"  [+] Running Fixed-Time Baseline for {scenario_id} ({args.episodes} episode(s), matching seeds)...")
+            for ep in range(args.episodes):
+                base_ep_seed = args.seed + ep
+                base_run_id = generate_run_id(prefix=f"eval_baseline_fixed_time_{scenario_id}_ep{ep}", run_type="test")
+                _, _, *_ = ensure_run_directories(base_run_id)
+                base_tripinfo = get_tripinfo_path(base_run_id)
+                base_emissions = get_emissions_path(base_run_id)
+
+                print(f"    -> Baseline Episode {ep + 1}/{args.episodes} (Seed: {base_ep_seed})...")
+                try:
+                    base_env = create_env(cur_rou, base_ep_seed, base_tripinfo, base_emissions, use_gui=False, fixed_ts=True)
+                except Exception as exc:
+                    print(f"[!] Warning: Could not run baseline simulation for {scenario_id}: {exc}", file=sys.stderr)
+                    break
+
+                base_model = FixedTimeController()
+                base_ep_recs = evaluate_controller(
+                    controller=base_model,
+                    env=base_env,
+                    controller_name="fixed_time",
+                    scenario_id=scenario_id,
+                    seed=base_ep_seed,
+                    episodes=1,
+                    step_metrics_collector=step_records if args.plot_steps else None,
+                    episode_index_offset=ep,
+                )
+                base_env.close()
+
+                if base_tripinfo.exists():
+                    t_m = parse_tripinfo(base_tripinfo, episode_seconds=args.num_seconds)
+                    e_m = (
+                        parse_emissions(base_emissions)
+                        if base_emissions.exists()
+                        else parse_emissions.__globals__["EmissionMetrics"](0.0, 0.0, 0.0)
+                    )
+                    b_sim = base_ep_recs[0] if base_ep_recs else None
+                    merged_base = merge_tripinfo_metrics(
+                        t_m,
+                        e_m,
+                        controller="fixed_time",
+                        scenario_id=scenario_id,
+                        seed=base_ep_seed,
+                        average_queue_length=b_sim.average_queue_length if b_sim else 0.0,
+                        phase_switch_rate=b_sim.phase_switch_rate if b_sim else 0.0,
+                        min_green_violations=b_sim.min_green_violations if b_sim else 0,
+                        inference_latency=b_sim.inference_latency if b_sim else None,
+                    )
+                    records.append(merged_base)
+                else:
+                    records.extend(base_ep_recs)
+            print(f"  [+] Baseline evaluation for {scenario_id} completed.")
 
     # Aggregate & display
-    summaries = aggregate_metrics(records)
+    summaries = aggregate_metrics(records, confidence=args.confidence)
+    ci_label = f"{int(args.confidence * 100)}% CI"
     for s in summaries:
         print("\n==========================================")
         print(f"Controller : {s.controller}")
@@ -422,7 +564,7 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         print("------------------------------------------")
         for metric, mean_val in s.means.items():
             ci = s.confidence_intervals.get(metric, (mean_val, mean_val))
-            print(f"  {metric:<24}: {mean_val:>10.2f} (95% CI: [{ci[0]:.2f}, {ci[1]:.2f}])")
+            print(f"  {metric:<24}: {mean_val:>10.2f} ({ci_label}: [{ci[0]:.2f}, {ci[1]:.2f}])")
         print("==========================================")
 
     # Save CSV & plot
@@ -431,9 +573,22 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
     save_evaluation_results(records, out_csv)
     print(f"\n[OK] Results saved to: {out_csv}")
 
+    if args.compare_baseline and controller_name != "fixed_time":
+        comp_csv = args.output_dir / "comparison_model_vs_fixed_time.csv"
+        save_comparison_results(records, comp_csv, baseline_controller="fixed_time")
+        print(f"[OK] Comparison summary saved to: {comp_csv}")
+
     out_plot = args.output_dir / "waiting_time_comparison.png"
     plot_metric_comparison(records, "average_waiting_time", output_path=out_plot)
-    print(f"[OK] Summary comparison plot saved to: {out_plot}")
+    print(f"[OK] Waiting time comparison plot saved to: {out_plot}")
+
+    out_queue_plot = args.output_dir / "queue_comparison.png"
+    plot_metric_comparison(records, "average_queue_length", output_path=out_queue_plot)
+    print(f"[OK] Queue comparison plot saved to: {out_queue_plot}")
+
+    out_loss_plot = args.output_dir / "time_loss_comparison.png"
+    plot_metric_comparison(records, "time_loss", output_path=out_loss_plot)
+    print(f"[OK] Time loss comparison plot saved to: {out_loss_plot}")
 
     # Step-level timeline metrics and diagrams
     if args.plot_steps and step_records:
@@ -473,7 +628,7 @@ def main() -> None:
     args = parse_args()
     if args.tripinfo:
         evaluate_from_xml(args)
-    elif args.net and args.rou:
+    elif args.net and (args.rou or args.manifest):
         evaluate_simulation(args)
     else:
         print(

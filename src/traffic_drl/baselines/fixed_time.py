@@ -65,7 +65,7 @@ class FixedTimeController:
         Returns:
             int: The identity action (phase hold); value is environment-specific.
         """
-        raise NotImplementedError
+        return 0
 
     def reset(self) -> None:
         """No internal state to reset for fixed-time control.

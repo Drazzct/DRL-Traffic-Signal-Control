@@ -56,14 +56,28 @@ class AllRedSumoEnvironment(SumoEnvironment):
     AllRedObservationFunction so the min_green flag accounts for red_time.
     """
 
-    def __init__(self, *args, red_time: int = 0, program_id: Optional[Union[str, Dict[str, str]]] = None, **kwargs):
+    def __init__(self, *args, red_time: int = 0, program_id: Optional[Union[str, Dict[str, str]]] = None, enforce_max_green: bool = True, **kwargs):
         self.red_time = red_time
         self.program_id = program_id
+        self.enforce_max_green = enforce_max_green
         kwargs.setdefault("observation_class", AllRedObservationFunction)
         super().__init__(*args, **kwargs)
         assert self.delta_time > self.yellow_time + self.red_time, (
             "delta_time must be greater than yellow_time + red_time"
         )
+        from sumo_rl.environment.env import LIBSUMO, traci, sumolib
+        from gymnasium import spaces
+
+        init_label = "all_red_init_" + self.label
+        if LIBSUMO:
+            traci.start([self._sumo_binary, "-n", self._net])
+            conn = traci
+        else:
+            traci.start([self._sumo_binary, "-n", self._net], label=init_label)
+            conn = traci.getConnection(init_label)
+
+        self._build_traffic_signals(conn)
+        conn.close()
 
     def _build_traffic_signals(self, conn):
         if not isinstance(self.reward_fn, dict):
@@ -72,6 +86,7 @@ class AllRedSumoEnvironment(SumoEnvironment):
             program_ids = self.program_id
         else:
             program_ids = {ts: self.program_id for ts in self.ts_ids}
+        reward_weights = getattr(self, "reward_weights", None)
         self.traffic_signals = {
             ts: AllRedTrafficSignal(
                 self,
@@ -84,9 +99,33 @@ class AllRedSumoEnvironment(SumoEnvironment):
                 self.enforce_max_green,
                 self.begin_time,
                 self.reward_fn[ts],
-                self.reward_weights,
+                reward_weights,
                 conn,
                 program_id=program_ids.get(ts),
             )
             for ts in self.ts_ids
         }
+
+    def reset(self, seed: Optional[int] = None, **kwargs):
+        """Reset the environment using AllRedTrafficSignal."""
+        import gymnasium as gym
+        gym.Env.reset(self, seed=seed, **kwargs)
+
+        if self.episode != 0:
+            self.close()
+            self.save_csv(self.out_csv_name, self.episode)
+        self.episode += 1
+        self.metrics = []
+
+        if seed is not None:
+            self.sumo_seed = seed
+        self._start_simulation()
+
+        self._build_traffic_signals(self.sumo)
+
+        self.vehicles = dict()
+
+        if self.single_agent:
+            return self._compute_observations()[self.ts_ids[0]], self._compute_info()
+        else:
+            return self._compute_observations()

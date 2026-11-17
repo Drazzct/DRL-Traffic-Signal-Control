@@ -221,3 +221,5 @@ __marimo__/
 
 .agents/
 scenarios/sumo_definitions/
+models/
+runs/
