@@ -424,6 +424,8 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
         print(f"[*] Route file : {cur_rou}")
         print(f"=======================================================")
 
+        scen_step_records: list[StepMetrics] = []
+
         for ep in range(args.episodes):
             ep_seed = args.seed + ep
             ep_run_id = generate_run_id(prefix=f"eval_{controller_name}_{scenario_id}_ep{ep}", run_type="test")
@@ -471,7 +473,7 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
                 scenario_id=scenario_id,
                 seed=ep_seed,
                 episodes=1,
-                step_metrics_collector=step_records if args.plot_steps else None,
+                step_metrics_collector=scen_step_records if args.plot_steps else None,
                 episode_index_offset=ep,
             )
             env.close()
@@ -524,7 +526,7 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
                     scenario_id=scenario_id,
                     seed=base_ep_seed,
                     episodes=1,
-                    step_metrics_collector=step_records if args.plot_steps else None,
+                    step_metrics_collector=scen_step_records if args.plot_steps else None,
                     episode_index_offset=ep,
                 )
                 base_env.close()
@@ -552,6 +554,40 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
                 else:
                     records.extend(base_ep_recs)
             print(f"  [+] Baseline evaluation for {scenario_id} completed.")
+
+        # Save per-scenario timeline plots and step metrics in its own dedicated subfolder
+        if args.plot_steps and scen_step_records:
+            scen_dir = args.output_dir / scenario_id
+            scen_dir.mkdir(parents=True, exist_ok=True)
+
+            scen_step_csv = scen_dir / "step_metrics.csv"
+            save_step_metrics(scen_step_records, scen_step_csv)
+
+            scen_dashboard = scen_dir / "step_evaluation_dashboard.png"
+            plot_step_evaluation_dashboard(
+                scen_step_records,
+                output_path=scen_dashboard,
+                title=f"Traffic Dynamics Timeline - {scenario_id}",
+            )
+
+            scen_wait_plot = scen_dir / "accumulated_waiting_time.png"
+            plot_step_metric_timeseries(
+                scen_step_records,
+                metric="accumulated_waiting_time",
+                output_path=scen_wait_plot,
+                title=f"Accumulated Waiting Time Progression - {scenario_id}",
+            )
+
+            scen_queue_plot = scen_dir / "queue_length_timeline.png"
+            plot_step_metric_timeseries(
+                scen_step_records,
+                metric="queue_length",
+                output_path=scen_queue_plot,
+                title=f"Queue Length Over Time - {scenario_id}",
+            )
+            print(f"  [OK] Saved scenario '{scenario_id}' timeline plots to: {scen_dir}")
+
+            step_records.extend(scen_step_records)
 
     # Aggregate & display
     summaries = aggregate_metrics(records, confidence=args.confidence)
@@ -590,37 +626,11 @@ def evaluate_simulation(args: argparse.Namespace) -> None:
     plot_metric_comparison(records, "time_loss", output_path=out_loss_plot)
     print(f"[OK] Time loss comparison plot saved to: {out_loss_plot}")
 
-    # Step-level timeline metrics and diagrams
+    # Consolidated Step-level timeline metrics across all scenarios
     if args.plot_steps and step_records:
         step_csv = args.output_dir / "step_metrics.csv"
         save_step_metrics(step_records, step_csv)
-        print(f"[OK] Time-step metrics saved to: {step_csv}")
-
-        dashboard_plot = args.output_dir / "step_evaluation_dashboard.png"
-        plot_step_evaluation_dashboard(
-            step_records,
-            output_path=dashboard_plot,
-            title=f"Traffic Dynamics & Evaluation Timeline - {scenario_id}",
-        )
-        print(f"[OK] Step dashboard plot saved to: {dashboard_plot}")
-
-        cum_wait_plot = args.output_dir / "accumulated_waiting_time.png"
-        plot_step_metric_timeseries(
-            step_records,
-            metric="accumulated_waiting_time",
-            output_path=cum_wait_plot,
-            title=f"Accumulated Waiting Time Progression - {scenario_id}",
-        )
-        print(f"[OK] Accumulated waiting time plot saved to: {cum_wait_plot}")
-
-        queue_plot = args.output_dir / "queue_length_timeline.png"
-        plot_step_metric_timeseries(
-            step_records,
-            metric="queue_length",
-            output_path=queue_plot,
-            title=f"Queue Length Over Time - {scenario_id}",
-        )
-        print(f"[OK] Queue length timeline plot saved to: {queue_plot}")
+        print(f"[OK] Consolidated time-step metrics saved to: {step_csv}")
 
 
 

@@ -8,15 +8,20 @@ Tài liệu này cung cấp hướng dẫn chi tiết về cấu trúc thư mụ
 
 ```text
 outputs/
-├── results/                                  # Kết quả đánh giá & biểu đồ trực quan hóa
-│   ├── metrics.csv                           # Bảng tổng hợp chỉ số hiệu năng cấp Episode
-│   ├── step_metrics.csv                      # Chuỗi thời gian đo đạc động học theo từng bước (Step-level)
-│   ├── waiting_time_comparison.png           # Biểu đồ so sánh thời gian chờ trung bình
-│   ├── queue_comparison.png                  # Biểu đồ so sánh độ dài hàng đợi trung bình
-│   ├── time_loss_comparison.png              # Biểu đồ so sánh tổn thất thời gian trung bình
-│   ├── step_evaluation_dashboard.png         # Dashboard 4 đồ thị theo dõi diễn biến mạng lưới
-│   ├── accumulated_waiting_time.png          # Đồ thị tích lũy thời gian chờ theo thời gian
-│   └── queue_length_timeline.png             # Đồ thị biến thiên độ dài hàng đợi theo thời gian
+├── results/                                  # Thư mục gốc chứa các báo cáo & biểu đồ SO SÁNH TỔNG THỂ
+│   ├── metrics.csv                           # Bảng tổng hợp chỉ số hiệu năng cấp Episode của tất cả kịch bản
+│   ├── comparison_model_vs_fixed_time.csv    # Bảng đối sánh trực tiếp side-by-side kèm % cải thiện
+│   ├── step_metrics.csv                      # Dữ liệu chuỗi thời gian hợp nhất của tất cả kịch bản
+│   ├── waiting_time_comparison.png           # Biểu đồ cột so sánh thời gian chờ TB giữa các kịch bản
+│   ├── queue_comparison.png                  # Biểu đồ cột so sánh độ dài hàng đợi TB giữa các kịch bản
+│   ├── time_loss_comparison.png              # Biểu đồ cột so sánh tổn thất thời gian TB giữa các kịch bản
+│   │
+│   ├── <scenario_id>/                        # THƯ MỤC RIÊNG CHO TỪNG KỊCH BẢN (vd: 30_vip_motorcade_diversion/)
+│   │   ├── step_evaluation_dashboard.png     # Dashboard 4 đồ thị vi mô diễn biến động học kịch bản này
+│   │   ├── accumulated_waiting_time.png      # Đồ thị tích lũy thời gian chờ (đường tăng dần chuẩn xác)
+│   │   ├── queue_length_timeline.png         # Đồ thị biến thiên độ dài hàng đợi tức thời theo thời gian
+│   │   └── step_metrics.csv                  # Dữ liệu đo đạc chi tiết từng bước 5s của riêng kịch bản này
+│   └── ...                                   # Các thư mục kịch bản kiểm thử khác
 └── runs/                                     # Dữ liệu SUMO raw cho từng phiên chạy độc lập
     └── <run_id>/
         ├── tripinfo/
@@ -119,6 +124,9 @@ File dashboard này gồm **4 đồ thị con (2x2 grid)**, biểu diễn toàn 
 
 ### 3.2. Biểu Đồ So Sánh Cột (Bar Charts)
 
+> [!NOTE]
+> Trên trục hoành (X-axis) của các biểu đồ so sánh cột, tên kịch bản được tự động rút gọn thành **mã số kịch bản** (ví dụ: `30`, `49`, `64`, `68`, `77`, `80`) thay vì viết toàn bộ chuỗi dài, giúp nhãn hiển thị rõ ràng, không bị chồng đè chữ lên nhau.
+
 - **`queue_comparison.png` (So sánh hàng đợi trung bình)**:
   - Thể hiện sự chênh lệch số lượng xe kẹt trung bình tại nút giữa DRL Model và Baseline Fixed-Time.
   - Cột càng ngắn $\rightarrow$ Hiệu quả giảm chiều dài hàng đợi càng cao.
@@ -131,12 +139,26 @@ File dashboard này gồm **4 đồ thị con (2x2 grid)**, biểu diễn toàn 
 
 ---
 
-### 3.3. Biểu Đồ Dạng Đường Theo Thời Gian (Timelines)
+### 3.3. Biểu Đồ Dạng Đường Theo Thời Gian Của Từng Kịch Bản (Scenario Timelines)
 
-- **`queue_length_timeline.png`**:
-  - So sánh trực tiếp đường biến thiên hàng đợi của từng Controller trên cùng một hệ trục. Cho thấy Controller nào phản ứng nhanh hơn khi làn sóng phương tiện (shockwave/peak) ập vào.
-- **`accumulated_waiting_time.png`**:
-  - So sánh sự phân kỳ (divergence) của tổng độ trễ. Khoảng cách giữa 2 đường càng nới rộng theo thời gian chứng tỏ sự vượt trội của giải thuật tốt hơn.
+Các biểu đồ này được lưu trữ riêng biệt trong thư mục của từng kịch bản (`outputs/results/<scenario_id>/`) để phản ánh chính xác động học điều khiển vi mô:
+
+- **`accumulated_waiting_time.png` (Thời gian chờ tích lũy theo thời gian)**:
+  - **Ý nghĩa toán học**: Đây là tích phân cộng dồn (running cumulative sum) toàn bộ số giây chờ của tất cả xe dừng đỗ tại nút từ thời điểm $t=0$ đến thời điểm hiện tại.
+  - **Tính chất bắt buộc**: Về mặt vật lý giao thông, hàm này **bắt buộc phải là hàm tăng đơn điệu hoặc đi ngang** ($W_{t+\Delta t} \ge W_t$). Xe dừng đèn đỏ chỉ làm tăng thêm tổng thời gian chờ, không thể làm giảm đi.
+  - **Cách đọc và so sánh**:
+    - **Độ dốc (Slope)**: Thể hiện tốc độ tích tụ ùn ứ. Độ dốc càng thoải chứng tỏ nút giao thoát xe nhanh, ít phương tiện phải dừng lại.
+    - **Vị trí đường (Position)**: Đường của Controller nào **nằm thấp hơn** thì Controller đó tối ưu hơn vì tổng độ trễ tích lũy trong suốt quá trình lưu thông ít hơn.
+    - **Khoảng cách phân kỳ (Divergence gap)**: Nếu theo thời gian, khoảng cách giữa đường DQN và Fixed-Time càng nới rộng ra, điều đó chứng minh giải thuật DRL duy trì ưu thế bền vững trong suốt thời gian dài.
+  - *(Lưu ý về lỗi hiển thị cũ: Nếu biểu đồ bị zíc-zắc lên xuống thất thường, nguyên nhân là do dữ liệu của nhiều kịch bản khác nhau bị vẽ gộp chung vào cùng một trục thời gian mà không phân tách theo `scenario_id`. Khi tách riêng ra từng thư mục kịch bản, đường biểu đồ sẽ hoàn toàn trơn tru và tăng dần chuẩn xác).*
+
+- **`queue_length_timeline.png` (Chiều dài hàng đợi tức thời theo thời gian)**:
+  - Cho biết tại mỗi bước 5 giây, có bao nhiêu xe đang dừng chờ tại tất cả các nhánh vào giao lộ.
+  - Biểu đồ này có thể tăng giảm dạng sóng: Tăng khi làn sóng xe ập vào hoặc đèn đỏ, và giảm mạnh khi đèn xanh kích hoạt giải tỏa hàng đợi.
+  - Đường nào dập tắt các đỉnh nhọn (peak spikes) nhanh hơn và có diện tích dưới đường cong nhỏ hơn là Controller vượt trội hơn.
+
+- **`step_evaluation_dashboard.png`**:
+  - Tích hợp 4 biểu đồ con theo dõi toàn diện: Hàng đợi tức thời, Chờ tích lũy, Vận tốc trung bình và Reward tích lũy của mô hình trong kịch bản đó.
 
 ---
 
