@@ -1,0 +1,109 @@
+\section{Methodology}\label{s:4}
+\subsection{System Architecture}
+Figure~\ref{fig:system-architecture} summarizes the simulation, control, training, and evaluation workflow. The scenario manifest initializes the SUMO-RL environment, which returns observations, rewards, and traffic metrics to the learning agent. The selected signal phase is applied in the simulator, whose updated traffic state closes the interaction loop. Baseline controllers use the same simulation pipeline for comparison.
+
+\begin{figure}[H]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[
+  x=0.9cm, y=0.9cm,
+  archblock/.style={draw=black!65, fill=blue!4, rounded corners=1.5pt,
+    align=center, font=\scriptsize, minimum height=7mm, inner sep=2pt},
+  flow/.style={-{Stealth[length=1.8mm]}, draw=blue!65!black, line width=0.65pt}
+]
+  \node[archblock, text width=3.6cm] (config) at (0,0) {Configuration Files};
+  \node[archblock, text width=3.6cm] (manifest) at (0,-0.95) {Scenario Manifest};
+  \node[archblock, text width=3.6cm] (environment) at (0,-1.9) {SUMO-RL Environment};
+  \node[archblock, text width=3.6cm] (observations) at (0,-2.85) {Observation, Reward, and Metrics};
+  \node[archblock, text width=3.6cm] (agent) at (0,-3.8) {RL Agent};
+  \node[archblock, text width=3.6cm] (controller) at (0,-4.75) {Traffic-Signal Controller};
+  \node[archblock, text width=3.6cm] (simulator) at (0,-5.7) {SUMO Simulator};
+  \node[archblock, text width=3.6cm] (evaluation) at (0,-6.65) {Evaluation Results};
+
+  \node[archblock, text width=1.6cm] (training) at (3.0,-3.8) {Training Outputs};
+  \node[archblock, text width=1.6cm] (baseline) at (3.0,-4.75) {Baseline Controllers};
+
+  \draw[flow] (config) -- (manifest);
+  \draw[flow] (manifest) -- (environment);
+  \draw[flow] (environment) -- (observations);
+  \draw[flow] (observations) -- (agent);
+  \draw[flow] (agent) -- (controller);
+  \draw[flow] (controller) -- (simulator);
+  \draw[flow] (simulator) -- (evaluation);
+  \draw[flow] (agent.east) -- (training.west);
+  \draw[flow] (baseline.west) -- (controller.east);
+  \draw[flow] (training.east) -- ++(0.4,0) |- node[pos=0.55, right, font=\scriptsize, fill=white, inner sep=1pt] {trained policy} (evaluation.east);
+  \draw[flow] (simulator.west) -- ++(-0.55,0) |- node[pos=0.5, left, font=\scriptsize, fill=white, inner sep=1pt] {traffic feedback} (environment.west);
+\end{tikzpicture}%
+}
+\caption{Proposed SUMO-RL controller architecture.}
+\label{fig:system-architecture}
+\end{figure}
+
+\subsection{SUMO--Agent Interaction}
+The interaction between the RL agent and the traffic simulation follows the standard Gymnasium environment cycle. At the start of each episode, the environment resets SUMO, loads the selected route scenario, and initializes the traffic-light controller in its initial green phase. It then converts the initial traffic state into an observation vector $\mathbf{s}_0$. At each 5-second decision interval, the agent receives the current observation and selects a discrete green-phase action $a_t$.
+
+TraCI exposes the SUMO variables used to form each observation. For the roundabout, the vector contains normalized approach density, per-class queue information, normalized speed on each circulatory-ring segment, a one-hot encoding of the active phase, and elapsed green time. These features form the fixed-length state defined in Section~\ref{s:3} and are supplied to the agent.
+
+The selected action is sent to the signal controller. For a phase change, the controller first checks the minimum-green constraint. If permitted, it applies yellow clearance and, when configured, an all-red interval before activating the requested phase. Otherwise, it retains the current green phase, including when the action selects that phase.
+
+SUMO then advances by one decision interval. The resulting traffic state is used to compute the scalar reward $r_t$, after which the environment returns the next observation $\mathbf{s}_{t+1}$, the reward, and termination or truncation indicators to the agent. The high-level step sequence is:
+\begin{enumerate}
+\item Reset the SUMO network and load a route scenario.
+\item Observe inbound queues, approach density, circulatory speed, and signal state.
+\item Send the observation $\mathbf{s}_t$ to the RL policy.
+\item Select a discrete phase action $a_t$.
+\item Check the minimum-green constraint and apply any required phase transition.
+\item Advance the SUMO simulation by one decision interval.
+\item Compute $r_t$ from waiting time, queue length, phase switching, and deadlock-related terms.
+\item Return $\mathbf{s}_{t+1}$, $r_t$, and the episode-status indicators to the agent.
+\end{enumerate}
+This cycle repeats until the configured episode horizon is reached or an earlier termination condition occurs. During training, each transition $(\mathbf{s}_t,a_t,r_t,\mathbf{s}_{t+1})$ is stored and used to update the agent according to the selected DRL algorithm. During evaluation, the same interaction cycle is used, but the trained policy selects actions deterministically and its parameters are not updated.
+\subsection{Signal-Phase Transition Mechanism}
+At each decision interval, the controller receives a discrete phase action $a_t$ from the DRL agent. It maintains the active green phase and enforces the configured traffic-safety constraints. A requested phase change is applied only after the current phase has satisfied the minimum-green duration.
+
+Let $t_{\mathrm{elapsed}}$ denote the time since the current green phase began. If $a_t$ selects the active phase, the controller keeps that phase. If $a_t$ selects a different phase while $t_{\mathrm{elapsed}} < t_{\mathrm{min}}$, the request is rejected and the active phase is retained. Once $t_{\mathrm{elapsed}} \geq t_{\mathrm{min}}$, the controller begins the transition to the requested phase. The transition consists of a yellow-clearance interval and, when enabled, an all-red interval.
+
+The yellow stage is computed for each phase pair and changes only affected signal aspects. Approaches losing right of way turn yellow; approaches that remain red or stop keep those indications. When enabled, the all-red stage sets every approach to red for the configured duration, allowing conflicting traffic to clear. The transition is represented as
+\begin{equation*}
+\text{Green}(p_i) \rightarrow \text{Yellow}(p_i,p_j)
+\rightarrow [\text{All-red}] \rightarrow \text{Green}(p_j),
+\end{equation*}
+where $p_i$ is the active phase, $p_j$ is the requested phase, and brackets indicate the optional all-red stage. The clearance intervals are included in the phase elapsed time, and a new phase change cannot interrupt a transition already in progress.
+
+The decision interval is 5 seconds. The minimum-green, yellow, and all-red durations are read from the environment configuration; in the roundabout configuration, these are 10 seconds, 3 seconds, and disabled, respectively. The controller obtains the available green phases from the selected SUMO signal program and constructs the corresponding yellow and, if enabled, all-red transitions for every pair of distinct phases.
+
+At the end of each control step, SUMO advances and updates the active signal state before the next observation is returned to the agent. The controller also records phase changes and rejected requests blocked by the minimum-green constraint for the evaluation metrics.
+\subsection{DRL Algorithm and Policy Network}
+Our primary algorithm is Deep Q-Network (DQN), an off-policy method that estimates $Q^*(\mathbf{s},a)$. At step $t$, the agent observes state $\mathbf{s}_t$, chooses phase $a_t$, receives reward $r_t$, and observes state $\mathbf{s}_{t+1}$. For a transition sampled from replay buffer $\mathcal{D}$, the target is
+\begin{equation*}
+y_t = r_t + \gamma(1-d_t)\max_{a'} Q_{\theta^-}(\mathbf{s}_{t+1},a'),
+\end{equation*}
+where $Q_{\theta^-}$ is the target network, $\gamma$ is the discount factor, and $d_t$ indicates a terminal state. Stable-Baselines3 DQN minimizes the Huber loss of the temporal-difference error $\delta_t=y_t-Q_\theta(\mathbf{s}_t,a_t)$:
+\begin{equation*}
+\mathcal{L}(\theta)=\mathbb{E}_{\mathcal{D}}\left[\ell_{\mathrm{Huber}}(\delta_t)\right].
+\end{equation*}
+
+For the roundabout experiment, DQN uses a learning rate of $3\times10^{-4}$, a batch size of 64, a replay-buffer capacity of 100,000 transitions, and a discount factor of 0.99. Learning starts after 1,440 environment transitions have been collected. The exploration rate decreases linearly from 1.0 to 0.05 over the first half of training. The target network uses a soft-update coefficient of 0.005, and training is scheduled every four environment steps.
+
+The policy is a multilayer perceptron (MLP) that maps the normalized observation vector to one estimated Q-value per selectable green phase. Its output layer therefore has $K$ units, where $K$ is the number of distinct green phases in the selected SUMO signal program. With the default Stable-Baselines3 MLP policy, the hidden layers contain 64 units each; any custom hidden-layer widths are specified by the experiment's policy configuration. During deterministic evaluation, the greedy action is selected as $\arg\max_a Q_\theta(\mathbf{s}_t,a)$. During training, the exploration policy selects a random legal phase according to the configured exploration schedule.
+
+Environment wrappers normalize observations before they reach the network. The roundabout setup clips unusually large observations and disables reward normalization.
+
+Proximal Policy Optimization (PPO) is supported as a secondary on-policy comparison algorithm. It uses the same observation space and traffic-signal environment and optimizes a stochastic policy with clipped updates. The configured PPO experiment uses a learning rate of $3\times10^{-4}$, 2,048 environment steps per update, a batch size of 64, ten optimization epochs, a discount factor of 0.99, a generalized advantage-estimation parameter of 0.95, a clipping range of 0.20, and an entropy coefficient of 0.01. PPO is included as a comparison when specified in the experimental plan; DQN remains the primary algorithm.
+
+Both algorithms use an MLP policy and the same normalized observations and reward. YAML files store the learning and environment hyperparameters. Checkpoints preserve the agent, DQN replay buffer or PPO rollout data, observation normalization statistics, and run metadata for reproducing or resuming runs with the same network, scenario split, and random seed.
+\subsection{Training Procedure}
+Training routes are drawn from the split specified in the scenario manifest. For the roundabout experiment, policy learning uses only scenarios marked \texttt{TR}; validation and test scenarios are held out. Before training, the network and route files, observation and reward functions, signal-timing constraints, and algorithm hyperparameters are loaded from the corresponding YAML configuration files.
+
+At the start of each episode, the environment samples a training route and resets the SUMO simulation and signal controller. The agent then interacts with the environment at 5-second decision intervals: it observes the traffic state, selects a green phase, and applies the configured minimum-green and phase-transition constraints. SUMO advances for one interval and returns the next observation and scalar reward.
+
+For DQN, each transition $(\mathbf{s}_t,a_t,r_t,\mathbf{s}_{t+1})$ is stored in the replay buffer. Learning begins after 1,440 transitions have been collected. Minibatches of 64 transitions are sampled for network updates, and the target network is updated with a soft-update coefficient of 0.005. The $\epsilon$-greedy exploration rate decreases from 1.0 to 0.05 during the first half of training. The main roundabout DQN run uses 100,000 environment timesteps.
+
+For PPO, the agent collects rollouts over 2,048 environment steps before each policy update. It computes advantages from the collected trajectories and performs ten optimization epochs using minibatches of 64 transitions. PPO is configured for 100,000 environment timesteps.
+
+The reward uses normalized PCU-weighted delay and inbound queue length. Both terms have a weight of 1.5 in the main DQN configuration. A deadlock penalty applies when average speed remains below $0.1\,\mathrm{m/s}$ for more than 120 seconds. The DQN phase-switching penalty weight is zero, while PPO uses a weight of 1.0.
+
+The trained model and statistics used to normalize observations are saved as checkpoints. Periodic saves support recovery and resumption, with their frequency set by \texttt{save\_freq}. DQN checkpoints also retain replay-buffer state.
+
+For evaluation, the saved checkpoint is loaded and run on validation or test scenarios. The policy acts deterministically, without updating its parameters. Each scenario is evaluated using multiple simulation seeds. Episode-level average waiting time, average queue length, time loss, throughput, phase-switch rate, and minimum-green violations are collected, then aggregated to report mean performance and variability across seeds.

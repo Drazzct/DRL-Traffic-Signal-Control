@@ -1,0 +1,1135 @@
+%----------------------------------------------------------
+%--------------LANA.sty------------------------------------
+%https://www.99colors.net/
+%http://latexcolor.com/
+%YUV
+%https://www.vu.lt/apiemus/universiteto-stiliaus-knyga
+%
+\usepackage[a4paper,textwidth=18cm,textheight=22cm,centering]{geometry}
+\usepackage{fancyhdr}
+\setlength{\headheight}{26pt}
+\setlength{\headsep}{8mm} %8--12
+\setlength{\footskip}{14mm} %10--15
+%\renewcommand{\footrulewidth}{0.4pt} % linijos storis
+\renewcommand{\footrule}{%
+  \kern-3pt
+  \hrule width\headwidth height\footrulewidth
+  \kern-3pt
+}
+
+\usepackage{array, tabularx, longtable, dcolumn, multirow, rotating, lscape, afterpage, upref, alltt}
+\usepackage{amsmath, amssymb, amsthm, graphicx, bm, xcolor}
+\usepackage{setspace}
+\usepackage{cite}%[nocompress]
+\usepackage{float}
+\usepackage{mathrsfs}
+\definecolor{MyBlue}{rgb}{0.0, 0.2, 0.6}%darkpowderblue
+\definecolor{MyPurple}{RGB}{123, 0, 63} %{rgb}{0.17, 0.04, 0.27}
+\definecolor{MyGrey}{rgb}{0.55, 0.57, 0.67}%coolgrey
+
+\usepackage[font=footnotesize, figurename=Figure, labelsep=period, labelfont=bf, skip=3pt]{caption}
+\captionsetup[figure]{skip=6pt}
+\usepackage[font=footnotesize, labelfont=normalfont, labelformat=simple]{subcaption}
+\renewcommand{\thesubfigure}{(\alph{subfigure})}
+\renewcommand{\thesubtable}{(\alph{subtable})}
+\usepackage[shortlabels]{enumitem}
+\usepackage{makecell}
+%\usepackage{bookmark}
+%
+\usepackage[hidelinks, pdftex]{hyperref}
+%\usepackage{pdfcomment}
+\usepackage{breakurl}
+\expandafter\def\expandafter\UrlBreaks\expandafter{\UrlBreaks%  save the current one
+%% \do\a\do\b\do\c\do\d\do\e\do\f\do\g\do\h\do\i\do\j%
+%% \do\k\do\l\do\m\do\n\do\o\do\p\do\q\do\r\do\s\do\t%
+%% \do\u\do\v\do\w\do\x\do\y\do\z\do\A\do\B\do\C\do\D%
+%% \do\E\do\F\do\G\do\H\do\I\do\J\do\K\do\L\do\M\do\N%
+%% \do\O\do\P\do\Q\do\R\do\S\do\T\do\U\do\V\do\W\do\X%
+%% \do\Y\do\Z}
+  \do\*\do\/\do\~\do\'\do\-\do\_\do\:}
+%
+\usepackage{algorithm}
+\captionsetup[algorithm]{labelsep=period, font=footnotesize}
+%\usepackage{algpseudocode}
+%\usepackage{algorithmic}
+
+%\newcommand{\ID}[1]{\href{https://orcid.org/#1}{\includegraphics[width=7.5pt]{../1024px-ORCID_iDsvg.png}}}
+\newcommand{\ID}[1]{\href{https://orcid.org/#1}{\LARGE{\color{orcid}${\bullet}$}
+%\includegraphics[width=7.5pt]{../ORCIDiD_iconvector.pdf}
+}}
+\newcommand{\iID}[1]{\href{https://orcid.org/#1}{\hspace{.7pt}\includegraphics[width=7.5pt]{../ORCIDiD_iconvector.pdf}}}
+\newcommand{\RORID}[1]{\href{https://ror.org/#1}{\color{MyBlue}\scriptsize{${}^{\mathbf{ROR}}$} 
+%\includegraphics[width=9pt]{../ror.png}
+}}
+
+\if0
+\newcommand{\ROR}[2]{\href{https://ror.org/#2}{#1}}
+\newcommand{\RORID}[1]{\href{https://ror.org/#1}{\ \includegraphics[width=3mm]{ror.png}}}
+\fi
+
+\newcommand{\COR}[1]{%
+  \href{mailto:#1}{%
+${}^{\boxtimes}$\textsuperscript{
+%      \includegraphics*[height=5.6pt, trim=0pt -.4pt 0pt 0pt]{../envelope_icon_bold.pdf}%
+}%
+}%
+}
+
+%\usepackage{mathtools}
+%\mathtoolsset{showonlyrefs}
+
+%--------------Fonts-----------------------------------
+%
+\usepackage{times}
+%\if0
+% pdfLaTeX
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+%\usepackage{lmodern}
+%\fi
+
+\if0
+% LuaLaTeX arba XeLaTeX
+\usepackage{fontspec}
+\setmainfont{Libertinus Serif}
+\fi
+
+%--------------Page elements-------------------------------
+
+\hyphenpenalty=8000
+\vfuzz2pt % Don't report over-full v-boxes if over-edge is small
+\hfuzz2pt % Don't report over-full h-boxes if over-edge is small
+
+
+%--------------Headers-------------------------------------
+
+\pagestyle{fancy}
+\fancyhead{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+%
+\fancyhead[LE]%
+{
+\ifthenelse{\value{page}>\firstpage}
+{\footnotesize\thepage}
+{\parbox[b]{12cm}{\footnotesize\raggedright Nonlinear Analysis: Modelling and Control, Vol.\,\namcvolume, No.\,\namcnumber, \firstpage--\lastpage\\
+ \textcolor{MyBlue}{\DOI}}}
+}
+\fancyhead[RE]%
+{
+\ifthenelse{\value{page}>\firstpage} %\hspace*{-1.5pt}}
+{\footnotesize\runauthor\hspace*{0.pt}}
+{\parbox[t]{12cm}{\raggedleft\mbox{}\\[-.7cm]
+%\includegraphics[height=2.cm]{../VUL.pdf}
+\hspace*{-.2cm}}}
+}
+\fancyhead[LO]%
+{
+\ifthenelse{\value{page}>\firstpage}
+{\footnotesize\runtitle}
+{\parbox[b]{12cm}{\footnotesize\raggedright Nonlinear Analysis: Modelling and Control, Vol.\,\namcvolume, No.\,\namcnumber, \firstpage--\lastpage\\
+ \textcolor{MyBlue}{\DOI}}}
+}
+\fancyhead[RO]%
+{
+\ifthenelse{\value{page}>\firstpage}
+{\footnotesize\thepage\hspace*{-2.pt}}
+{\parbox[t]{12cm}{\raggedleft\mbox{}\\[-.7cm]
+{\color{VU}{Author's version\\ \today}}
+%\includegraphics[height=2.cm]{../VUL.pdf}
+\hspace*{-.2cm}}}
+}
+
+%\fancyhead[LE]{\footnotesize\thepage}
+%\fancyhead[RO]{\footnotesize\thepage}
+
+%%%%%
+
+\fancyfoot[LO]%
+{
+\ifthenelse{\value{page}>\firstpage}
+{\footnotesize\href{\DOI}{\textcolor{MyBlue}{Nonlinear Anal. Model. Control, \namcvolume(\namcnumber):\firstpage--\lastpage, \namcyear}}}
+{%\rule{5cm}{1pt}\\[4pt]
+\parbox[b]{16.5cm}{\raggedright\footnotesize\copyright\ \namcyear\ \ifthenelse{\value{authors}>1}{The Author(s).}{The Author(s).}\\
+}}
+}
+\fancyfoot[LE]%
+{
+\ifthenelse{\value{page}>\firstpage}
+{}
+{%\rule{5cm}{1pt}\\[4pt]
+\parbox[b]{16.5cm}{\footnotesize\copyright\ \namcyear\ \ifthenelse{\value{authors}>1}{The Author(s).}{The Author(s).}\\
+}}
+}
+
+% \fancyfoot[RE]{\ifthenelse{\value{page}>\firstpage}
+% {\footnotesize \href{https://www.journals.vu.lt/nonlinear-analysis}{\textcolor{MyBlue}{https://www.journals.vu.lt/nonlinear-analysis}}}
+% {}
+% }
+
+
+
+
+
+
+
+%--------------Sections-------------------------------------
+
+\renewcommand{\section}{\@startsection{section}{1}{0pt}%
+  {-3.5ex plus -1ex minus -.2ex}{2.3ex plus .2ex}{\large\bf}}
+\renewcommand{\subsection}{\@startsection{subsection}{1}{0pt}%
+  {-3.5ex plus -1ex minus -.2ex}{1.3ex plus .2ex}{\bf}}
+\renewcommand{\subsubsection}{\@startsection{subsubsection}{1}{0pt}%
+  {-3.5ex plus -1ex minus -.2ex}{1.3ex plus .2ex}{\itshape}}
+
+%--------------Theorems-------------------------------------
+
+\theoremstyle{plain} 
+\newtheorem{theorem}{Theorem} 
+\newtheorem{lemma}[theorem]{Lemma} 
+\newtheorem{proposition}[theorem]{Proposition} 
+\newtheorem{corollary}[theorem]{Corollary} 
+\newtheorem{property}[theorem]{Property} 
+\newtheorem{assertion}[theorem]{Assertion} 
+\newtheorem{claim}[theorem]{Claim} 
+\newtheorem{hypothesis}[theorem]{Hypothesis} 
+\newtheorem{conjecture}[theorem]{Conjecture} 
+\newtheorem{statement}[theorem]{Statement} 
+\newtheorem*{thm}{Theorem} 
+\newtheorem*{lem}{Lemma} 
+\newtheorem*{prop}{Proposition} 
+\newtheorem*{cor}{Corollary} 
+\newtheorem*{cl}{Claim} 
+\newtheorem*{hpt}{Hypothesis} 
+\newtheorem*{con}{Conjecture} 
+\newtheorem*{stat}{Statement}
+
+\theoremstyle{definition} 
+\newtheorem{definition}[theorem]{Definition} 
+\newtheorem{assumption}[theorem]{Assumption} 
+\newtheorem{convention}[theorem]{Convention} 
+\newtheorem{notation}[theorem]{Notation} 
+\newtheorem{method}[theorem]{Method} 
+\newtheorem{problem}[theorem]{Problem} 
+\newtheorem{case}[theorem]{Case} 
+\newtheorem*{defin}{Definition} 
+\newtheorem*{assump}{Assumption} 
+\newtheorem*{nota}{Notation} 
+\newtheorem*{notations}{Notations} 
+\newtheorem*{meth}{Method} 
+\newtheorem*{prob}{Problem}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark} 
+\newtheorem{observation}[theorem]{Observation} 
+\newtheorem{example}[theorem]{Example} 
+\newtheorem{note}[theorem]{Note} 
+\newtheorem{conclusion}[theorem]{Conclusion} 
+\newtheorem*{rem}{Remark} 
+\newtheorem*{observ}{Observation} 
+\newtheorem*{exam}{Example} 
+\newtheorem*{nt}{Note} 
+\newtheorem*{concl}{Conclusion}
+
+
+%------------------------------------------------------------
+
+\newenvironment{Enu}[3]
+{\begin{enumerate}[label=#1, ref=#2, labelindent=#3, leftmargin=!, noitemsep, itemsep=1.pt]} %
+{\end{enumerate}}
+
+\newenvironment{Itemize}
+{\begin{itemize}[label=$\bullet$, noitemsep]} %nosep  %labelindent=\parindent, leftmargin=!,
+{\end{itemize}}
+
+\newenvironment{Ite}[1]
+{\begin{itemize}[label=#1, leftmargin=2.5\parindent, noitemsep]} %nosep
+{\end{itemize}}
+%[label=$\bullet$, labelindent=#1, leftmargin=!, noitemsep]
+
+%--------------Bibliography---------------------------------
+
+\renewcommand{\@biblabel}[1]{\hfill #1.}
+\newcommand{\arxiv}[1]{\href{http://arxiv.org/abs/#1}{arXiv:#1}}
+
+%-----------------Title-------------------------------------
+
+\if0
+\newenvironment{topmatter}[3]%
+{
+  \vspace*{15mm}
+  \begin{flushleft}
+  {%
+  \Large\bfseries
+  \setstretch{1.9}\selectfont
+  #1
+}\\[36pt]
+  {\bfseries #2}\\[36pt]
+  {\small #3}
+}
+{
+  \end{flushleft}
+}
+\fi
+
+\newenvironment{topmatter}[3]%
+{
+  \vspace*{30pt}
+  \begin{flushleft}
+  {\Large\bfseries
+   \begin{spacing}{.9}#1
+   \end{spacing}
+  }
+  {\mbox{}\\[6pt]
+  \bfseries #2}\\[14pt]
+  {\small #3}
+}
+{
+  \end{flushleft}
+}
+
+
+\renewenvironment{abstract}[1]%
+{\begin{flushleft}
+\baselineskip=\normalbaselineskip
+\renewcommand{\arraystretch}{1.5}
+{\small
+\vspace*{4pt}
+\begin{tabular}{@{}p{165mm}@{}}
+{\footnotesize \textbf{Received:} \received\ \ /\ \ \textbf{Revised:} \revised\ \ /\ \ \textbf{Published  online:} \published} \tabularnewline
+\textbf{Abstract.}\ {#1}\tabularnewline
+\footnotesize{\textbf{Keywords:}\ \keywords.} 
+\ifdefined\ams 
+\\  \vspace{-6mm}
+\footnotesize{\textbf{AMS Subject Classification:}\ \ams.} 
+\vspace*{3pt}
+\else \\
+\fi 
+\end{tabular}}
+}
+{\end{flushleft}}
+
+
+
+%\renewcommand{\qed}{\hbox{}\hfill$\triangleleft$}
+\let\originalRe\Re
+\renewcommand{\Re}{\operatorname{Re}}
+\let\originalIm\Im
+\renewcommand{\Im}{\operatorname{Im}}
+\newcommand{\ii}{\mathrm{i}}
+\newcolumntype{d}[1]{D{.}{.}{#1}}
+\renewcommand{\thefootnote}{\fnsymbol{footnote}}
+\renewcommand{\Lambda}{\varLambda}
+\renewcommand{\Phi}{\varPhi}
+\renewcommand{\Psi}{\varPsi}
+\renewcommand{\Theta}{\varTheta}
+\renewcommand{\Upsilon}{\varUpsilon}
+\newcommand{\ep}{\varepsilon}
+\newcommand{\ff}{\varphi}
+\newcommand{\pp}{\partial}
+\newcommand{\sk}[1]{\widehat{#1}}
+\newcommand{\bang}[1]{\widetilde{#1}}
+\newcommand{\br}[1]{\overline{#1}}
+\newcommand{\tg}{\operatorname{tg}}
+\newcommand{\Cl}{\operatorname{cl}}
+\newcommand{\ctg}{\operatorname{ctg}}
+\newcommand{\csch}{\operatorname{csch}}
+\newcommand{\sech}{\operatorname{sech}}
+\newcommand{\co}{\operatorname{co}}
+\newcommand{\cov}{\operatorname{cov}}
+\newcommand{\conv}{\operatorname{conv}}
+\newcommand{\Det}{\operatorname{Det}}
+\newcommand{\diam}{\operatorname{diam}}
+\newcommand{\Div}{\operatorname{div}}
+\newcommand{\Sp}{\operatorname{Sp}}
+\newcommand{\osc}{\operatorname{Osc}}
+\newcommand{\sgn}{\operatorname{sgn}}
+\newcommand{\sign}{\operatorname{sign}}
+\newcommand{\Span}{\operatorname{span}}
+\newcommand{\grad}{\operatorname{grad}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\dist}{\operatorname{dist}}
+\newcommand{\Fix}{\operatorname{Fix}}
+\newcommand{\Ker}{\operatorname{Ker}}
+\newcommand{\meas}{\operatorname{meas}}
+\newcommand{\mes}{\operatorname{mes}}
+\newcommand{\rank}{\operatorname{rank}}
+\newcommand{\supp}{\operatornamewithlimits{supp}}
+\newcommand{\esssup}{\operatorname{ess\,sup}}
+\newcommand{\esssupp}{\operatornamewithlimits{ess\,supp}}
+\newcommand{\essinf}{\operatornamewithlimits{ess\,inf}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\Tr}{\operatorname{Tr}}
+\newcommand{\kk}{\char 18}%kairiosios kabutes
+\newcommand{\dk}{\char 16}%desiniosios
+\newcommand{\vt}{\vspace{4pt}\baselineskip=0.95\normalbaselineskip}
+\newcommand{\vv}{\vspace{3pt}}
+\newcommand{\hh}{\hspace{.5pt}}
+\newcommand{\nhh}{\hspace{-.5pt}}
+\newcommand{\di}{\mathrm d}
+\newcommand{\e}{\mathrm e}
+\newcommand{\intt}{\int\limits}
+\renewcommand{\P}{\mathbf{P}}
+\newcommand{\E}{\mathbf{E}}
+\newcommand{\I}{\imath}
+
+
+\newcommand{\stirling}[2]{\genfrac{[}{]}{0pt}{}{#1}{#2}}
+
+\def\MR#1{\href{http://www.ams.org/mathscinet-getitem?mr=#1}{MR#1}}
+%\newcommand{\doi}[1]{\href{https://doi.org/#1}{doi:#1}}
+\newcommand{\doi}[1]{\url{https://doi.org/#1}}
+\newcommand{\email}[1]{\ \ \href{mailto:#1}{\textcolor{MyBlue}{#1}}}
+\newcommand{\address}[1]{\ \ #1}
+\newcommand{\DOI}[1]{\href{https://doi.org/#1}{https://doi.org/#1}}
+
+\newcommand{\continued}[1]{\ifthenelse{\isodd{#1}}{(\textit{continued on next page})}{\mbox{}}}
+\usepackage{datetime2}  
+\def\today{\ifcase\month\or  
+  January\or February\or March\or April\or May\or June\or  
+  July\or August\or September\or October\or November\or December\fi  
+  \space\number\day, \number\year} 
+  \def\DOI{https://doi.org/10.15388/namc.\namcyear.\namcvolume.XXXXXX} 
+\let\leq=\leqslant
+\let\geq=\geqslant
+\let\le=\leqslant
+\let\ge=\geqslant
+
+\newcolumntype{P}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{L}{>{$}l<{$}}
+\newcolumntype{R}{>{$}r<{$}}
+\newcolumntype{C}{>{$}c<{$}}
+\usepackage[hidelinks, pdftex]{hyperref}
+\usepackage{soul}  
+
+\definecolor{VU}{rgb}{0.482353,0,0.247059} 
+\definecolor{mygreen}{rgb}{0.05, 0.45, 0.05}
+\definecolor{orcid}{rgb}{0.647059,0.803922,0.223529}  
+\usepackage{ctable}  
+ \def\boldhline{\specialrule{.1em}{.05em}{.05em}}  
+\usepackage{amsmath, amsthm, amsfonts}  
+\usepackage{siunitx}  
+\usepackage{graphicx}  
+\usepackage{amsmath,amssymb,booktabs,tabularx,array,enumitem,xcolor}  
+\def\namcvolume{VV}  
+\def\namcnumber{n}  
+\def\namcyear{\the\year}
+\setcounter{page}{1} 
+\def\received{}  
+\def\revised{}  
+\def\published{} 
+\def\ArticleText{\renewcommand{\thefootnote}{\arabic{footnote}} \setcounter{footnote}{0}}    
+\newcounter{authors}  
+\@addtoreset{equation}{section}  
+\def\theequation{\arabic{section}.\arabic{equation}} 
+%\newgeometry{paperwidth=160mm, paperheight=240mm, margin=17.5mm, bottom=32.5mm, top=27.5mm}\vspace*{-5mm}  
+\newgeometry{top=3.7cm, bottom=4.1cm, textwidth=18cm, centering}  
+%\newgeometry{top=3.7cm, bottom=5.2cm, textwidth=16.5cm, centering}  
+   
+\if0  
+\newgeometry{textwidth=16.5cm,top=\dimexpr\Gm@tmargin+3cm\relax,bottom=\dimexpr\Gm@bmargin+2cm\relax, centering}  
+\fi   
+
+
+%linenostyle -============================================================================
+
+\newcount\linenopenalty\linenopenalty=-100000
+\mathchardef\linenopenaltypar=32000
+\mathchardef\@Mllbcodepen=11111 
+\mathchardef\@Mppvacodepen=11112 
+\let\@tempa\output
+\newtoks\output
+\let\@LN@output\output
+\output=\expandafter{\the\@tempa}
+\@tempa={%
+            \LineNoTest
+            \if@tempswa
+              \ifnum\outputpenalty=-\@Mllbcodepen 
+                \WriteLineNo 
+              \else 
+                \ifnum\outputpenalty=-\@Mppvacodepen 
+                  \PassVadjustList 
+                \else 
+                  \LineNoLaTeXOutput 
+                \fi 
+              \fi 
+            \else  
+              \MakeLineNo
+            \fi
+            }
+\def\LineNoTest{%
+  \let\@@par\@@@par
+  \ifnum\interlinepenalty<-\linenopenaltypar
+     \advance\interlinepenalty-\linenopenalty
+     \@LN@nobreaktrue
+     \fi
+  \@tempswatrue
+  \ifnum\outputpenalty>-\linenopenaltypar\else
+     \ifnum\outputpenalty>-188000\relax
+       \@tempswafalse
+       \fi
+     \fi
+  }
+\def\@LN@nobreaktrue{\let\if@nobreak\iftrue} % renamed v4.33
+\def\LineNoLaTeXOutput{% 
+  \ifnum \holdinginserts=\thr@@   % v4.33 without \@tempswafalse
+    \global\holdinginserts-\thr@@ 
+    \unvbox\@cclv 
+    \ifnum \outputpenalty=\@M \else \penalty\outputpenalty \fi 
+  \else
+    \if@twocolumn \let\@makecol\@LN@makecol \fi
+    \the\@LN@output % finally following David Kastrup's advice. 
+    \ifnum \holdinginserts=-\thr@@ 
+      \global\holdinginserts\thr@@ \fi 
+  \fi
+}
+\def\MakeLineNo{%
+   \@LN@maybe@normalLineNumber                        % v4.31 
+   \boxmaxdepth\maxdimen\setbox\z@\vbox{\unvbox\@cclv}%
+   \@tempdima\dp\z@ \unvbox\z@
+   \sbox\@tempboxa{\hb@xt@\z@{\makeLineNumber}}%
+   \stepLineNumber
+   \ht\@tempboxa\z@ \@LN@depthbox 
+   \@LN@do@vadjusts 
+   \count@\lastpenalty 
+   \ifnum\outputpenalty=-\linenopenaltypar 
+     \ifnum\count@=\z@ \else 
+       \xdef\@LN@parpgbrk{% 
+         \penalty\the\count@
+         \global\let\noexpand\@LN@parpgbrk
+                      \noexpand\@LN@screenoff@pen}% v4.4 
+     \fi
+   \else
+     \@tempcnta\outputpenalty
+     \advance\@tempcnta -\linenopenalty
+     \penalty \ifnum\count@<\@tempcnta \@tempcnta \else \count@ \fi 
+   \fi
+   }
+\newcommand\stepLineNumber{\stepcounter{linenumber}} 
+\def\@LN@depthbox{% 
+  \dp\@tempboxa=\@tempdima
+  \nointerlineskip \kern-\@tempdima \box\@tempboxa} 
+\let\@@@par\@@par
+\newcount\linenoprevgraf
+\def\linenumberpar{% 
+  \ifvmode \@@@par \else 
+    \ifinner \@@@par \else
+      \xdef\@LN@outer@holdins{\the\holdinginserts}% v4.2 
+      \advance \interlinepenalty \linenopenalty
+      \linenoprevgraf \prevgraf
+      \global \holdinginserts \thr@@ 
+      \@@@par
+      \ifnum\prevgraf>\linenoprevgraf
+        \penalty-\linenopenaltypar
+      \fi
+      \@LN@parpgbrk 
+      \global\holdinginserts\@LN@outer@holdins % v4.2
+      \advance\interlinepenalty -\linenopenalty
+    \fi     % from \ifinner ... \else 
+  \fi}      % from \ifvmode ... \else 
+\def\@LN@screenoff@pen{% 
+  \ifdim\lastskip=\z@ 
+    \@tempdima\prevdepth \setbox\@tempboxa\null 
+    \@LN@depthbox                           \fi}
+\global\let\@LN@parpgbrk\@LN@screenoff@pen 
+\newif\ifLineNumbers \LineNumbersfalse 
+\def\linenumbers{% 
+     \LineNumberstrue                            % v4.00 
+     \xdef\@LN@outer@holdins{\the\holdinginserts}% v4.3 
+     \let\@@par\linenumberpar
+     \ifx\@par\@@@par\let\@par\linenumberpar\fi
+     \ifx\par\@@@par\let\par\linenumberpar\fi
+     \@LN@maybe@moduloresume         % v4.31 
+     \@ifnextchar[{\resetlinenumber}%]
+                 {\@ifstar{\resetlinenumber}{}}%
+     }
+
+\def\nolinenumbers{% 
+  \LineNumbersfalse                              % v4.00
+  \let\@@par\@@@par
+  \ifx\@par\linenumberpar\let\@par\@@@par\fi
+  \ifx\par\linenumberpar\let\par\@@@par\fi
+  }
+\def\pagewiselinenumbers{\linenumbers\setpagewiselinenumbers}
+\def\runninglinenumbers{\setrunninglinenumbers\linenumbers}
+\@namedef{linenumbers*}{\par\linenumbers*}
+\@namedef{runninglinenumbers*}{\par\runninglinenumbers*}
+\def\endlinenumbers{\par\@endpetrue}
+\let\endrunninglinenumbers\endlinenumbers
+\let\endpagewiselinenumbers\endlinenumbers
+\expandafter\let\csname endlinenumbers*\endcsname\endlinenumbers
+\expandafter\let\csname endrunninglinenumbers*\endcsname\endlinenumbers
+\let\endnolinenumbers\endlinenumbers
+\newcommand\linenomathNonumbers{%
+  \ifLineNumbers 
+%%  \ifx\@@par\@@@par\else 
+    \ifnum\interlinepenalty>-\linenopenaltypar
+      \global\holdinginserts\thr@@ 
+      \advance\interlinepenalty \linenopenalty
+     \ifhmode                                   % v4.3 
+      \advance\predisplaypenalty \linenopenalty
+     \fi 
+    \fi
+  \fi
+  \ignorespaces
+  }
+\newcommand\linenomathWithnumbers{%
+  \ifLineNumbers 
+    \ifnum\interlinepenalty>-\linenopenaltypar
+      \global\holdinginserts\thr@@ 
+      \advance\interlinepenalty \linenopenalty
+     \ifhmode                                   % v4.3 
+      \advance\predisplaypenalty \linenopenalty
+     \fi 
+      \advance\postdisplaypenalty \linenopenalty
+      \advance\interdisplaylinepenalty \linenopenalty
+    \fi
+  \fi
+  \ignorespaces
+  }
+\newcommand\linenumberdisplaymath{%
+  \def\linenomath{\linenomathWithnumbers}%
+  \@namedef{linenomath*}{\linenomathNonumbers}%
+  }
+
+\newcommand\nolinenumberdisplaymath{%
+  \def\linenomath{\linenomathNonumbers}%
+  \@namedef{linenomath*}{\linenomathWithnumbers}%
+  }
+
+\def\endlinenomath{% 
+  \ifLineNumbers                            % v4.3 
+   \global\holdinginserts\@LN@outer@holdins % v4.21 
+  \fi 
+   \global % v4.21 support for LaTeX2e earlier than 1996/07/26. 
+   \@ignoretrue
+}
+\expandafter\let\csname endlinenomath*\endcsname\endlinenomath
+
+
+\nolinenumberdisplaymath
+\let\@LN@ExtraLabelItems\@empty
+\def\@LN@xnext#1\@lt#2\@@#3#4{\def#3{#1}\gdef#4{#2}}
+\global\let\@LN@labellist\@empty 
+\def\WriteLineNo{% 
+  \unvbox\@cclv 
+  \expandafter \@LN@xnext \@LN@labellist \@@ 
+                          \@LN@label \@LN@labellist 
+  \protected@write\@auxout{}{\string\newlabel{\@LN@label}% 
+         {{\theLineNumber}{\thepage}\@LN@ExtraLabelItems}}% 
+}
+\def\@LN@LLerror{\PackageError{lineno}{% 
+  \string\linelabel\space without \string\linenumbers}{% 
+  Just see documentation. (New feature v4.11)}\@gobble}
+\newcommand\linelabel{% 
+  \ifLineNumbers \expandafter \@LN@linelabel 
+  \else          \expandafter \@LN@LLerror   \fi}
+\gdef\@LN@linelabel#1{% 
+  \ifx\protect\@typeset@protect 
+   \ifvmode
+       \ifinner \else 
+          \leavevmode \@bsphack \@savsk\p@
+       \fi
+   \else
+       \@bsphack
+   \fi
+   \ifhmode
+     \ifinner
+       \@parmoderr
+     \else
+       \@LN@postlabel{#1}% 
+       \@esphack 
+     \fi
+   \else
+     \@LN@mathhook{#1}%
+   \fi
+  \fi 
+   }
+\def\@LN@postlabel#1{\g@addto@macro\@LN@labellist{#1\@lt}%
+       \vadjust{\penalty-\@Mllbcodepen}} 
+\def\@LN@mathhook#1{\@parmoderr}
+
+\def\makeLineNumberLeft{% 
+  \hss\linenumberfont\LineNumber\hskip\linenumbersep}
+\def\makeLineNumberRight{% 
+  \linenumberfont\hskip\linenumbersep\hskip\columnwidth
+  \hb@xt@\linenumberwidth{\hss\LineNumber}\hss}
+\def\linenumberfont{\normalfont\tiny\sffamily}
+\newdimen\linenumbersep
+\newdimen\linenumberwidth
+\linenumberwidth=10pt
+\linenumbersep=10pt
+\def\switchlinenumbers{\@ifstar
+    {\let\makeLineNumberOdd\makeLineNumberRight
+     \let\makeLineNumberEven\makeLineNumberLeft}%
+    {\let\makeLineNumberOdd\makeLineNumberLeft
+     \let\makeLineNumberEven\makeLineNumberRight}%
+    }
+\def\setmakelinenumbers#1{\@ifstar
+  {\let\makeLineNumberRunning#1%
+   \let\makeLineNumberOdd#1%
+   \let\makeLineNumberEven#1}%
+  {\ifx\c@linenumber\c@runninglinenumber
+      \let\makeLineNumberRunning#1%
+   \else
+      \let\makeLineNumberOdd#1%
+      \let\makeLineNumberEven#1%
+   \fi}%
+  }
+\def\leftlinenumbers{\setmakelinenumbers\makeLineNumberLeft}
+\def\rightlinenumbers{\setmakelinenumbers\makeLineNumberRight}
+\leftlinenumbers*
+\newcounter{linenumber}
+\newcount\c@pagewiselinenumber
+\let\c@runninglinenumber\c@linenumber
+\newcommand*\resetlinenumber[1][\@ne]{% 
+  \global                             % v4.22
+  \c@runninglinenumber#1\relax}
+\def\makeRunningLineNumber{\makeLineNumberRunning}
+\def\setrunninglinenumbers{%
+   \def\theLineNumber{\thelinenumber}%
+   \let\c@linenumber\c@runninglinenumber
+   \let\makeLineNumber\makeRunningLineNumber
+   }
+\setrunninglinenumbers\resetlinenumber
+\def\setpagewiselinenumbers{%
+   \let\theLineNumber\thePagewiseLineNumber
+   \let\c@linenumber\c@pagewiselinenumber
+   \let\makeLineNumber\makePagewiseLineNumber
+   }
+\def\makePagewiseLineNumber{\logtheLineNumber\getLineNumber
+  \ifoddNumberedPage
+     \makeLineNumberOdd
+  \else
+     \makeLineNumberEven
+  \fi
+  }
+\def\logtheLineNumber{\protected@write\@auxout{}{%
+   \string\@LN{\the\c@linenumber}{% 
+     \noexpand\the\c@LN@truepage}}} 
+\newcount\c@LN@truepage 
+\g@addto@macro\cl@page{\global\advance\c@LN@truepage\@ne}
+\@addtoreset{LN@truepage}{@ckpt}
+\def\LastNumberedPage{first} 
+\def\LN@Pfirst{\nextLN\relax}
+\let\lastLN\relax  % compare to last line on this page
+\let\firstLN\relax % compare to first line on this page
+\let\pageLN\relax  % get the page number, compute the linenumber
+\let\nextLN\relax  % move to the next page
+\AtEndDocument{\let\@LN\@gobbletwo}
+\def\@LN#1#2{{\expandafter\@@LN
+                 \csname LN@P#2C\@LN@column\expandafter\endcsname
+                 \csname LN@PO#2\endcsname
+                 {#1}{#2}}}
+
+\def\@@LN#1#2#3#4{\ifx#1\relax
+    \ifx#2\relax\gdef#2{#3}\fi
+    \expandafter\@@@LN\csname LN@P\LastNumberedPage\endcsname#1% 
+    \xdef#1{\lastLN{#3}\firstLN{#3}% 
+            \pageLN{#4}{\@LN@column}{#2}\nextLN\relax}%
+  \else
+    \def\lastLN##1{\noexpand\lastLN{#3}}%
+    \xdef#1{#1}%
+  \fi
+  \xdef\LastNumberedPage{#4C\@LN@column}}
+\def\@@@LN#1#2{{\def\nextLN##1{\noexpand\nextLN\noexpand#2}%
+                \xdef#1{#1}}}
+\def\NumberedPageCache{\LN@Pfirst}
+\def\testLastNumberedPage#1{\ifnum#1<\c@linenumber
+      \let\firstLN\@gobble
+  \fi}
+\def\testFirstNumberedPage#1{\ifnum#1>\c@linenumber
+     \def\nextLN##1{\testNextNumberedPage\LN@Pfirst}%
+  \else
+      \let\nextLN\@gobble
+      \def\pageLN{\gotNumberedPage{#1}}%
+  \fi}
+\long\def \@gobblethree #1#2#3{}
+\def\testNumberedPage{%
+  \let\lastLN\testLastNumberedPage
+  \let\firstLN\testFirstNumberedPage
+  \let\pageLN\@gobblethree
+  \let\nextLN\testNextNumberedPage
+  \NumberedPageCache
+  }
+\def\testNextNumberedPage#1{\ifx#1\relax
+     \global\def\NumberedPageCache{\gotNumberedPage0000}%
+     \PackageWarningNoLine{lineno}%
+                    {Linenumber reference failed,
+      \MessageBreak  rerun to get it right}%
+   \else
+     \global\let\NumberedPageCache#1%
+   \fi
+   \testNumberedPage
+   }
+\let\getLineNumber\testNumberedPage
+\newif\ifoddNumberedPage
+\newif\ifcolumnwiselinenumbers
+\columnwiselinenumbersfalse
+\def\gotNumberedPage#1#2#3#4{\oddNumberedPagefalse
+  \ifodd \if@twocolumn #3\else #2\fi\relax\oddNumberedPagetrue\fi
+  \advance\c@linenumber\@ne 
+  \ifcolumnwiselinenumbers
+     \subtractlinenumberoffset{#1}%
+  \else
+     \subtractlinenumberoffset{#4}%
+  \fi
+  }
+\def\runningpagewiselinenumbers{%
+  \let\subtractlinenumberoffset\@gobble
+  }
+\def\realpagewiselinenumbers{%
+  \def\subtractlinenumberoffset##1{\advance\c@linenumber-##1\relax}%
+  }
+\realpagewiselinenumbers
+\def\thePagewiseLineNumber{\protect 
+       \getpagewiselinenumber{\the\c@linenumber}}%
+\def\getpagewiselinenumber#1{{%
+  \c@linenumber #1\relax\testNumberedPage
+  \thelinenumber
+  }}
+\AtBeginDocument{% v4.2, revtex4.cls (e.g.). 
+ % <- TODO v4.4+: Or better in \LineNoLaTeXOutput!? 
+  \let\@LN@orig@makecol\@makecol} 
+\def\@LN@makecol{%
+   \@LN@orig@makecol
+   \setbox\@outputbox \vbox{%
+      \boxmaxdepth \@maxdepth
+      \protected@write\@auxout{}{% 
+          \string\@LN@col{\if@firstcolumn1\else2\fi}%
+      }%
+      \box\@outputbox 
+   }% \vbox
+} %% TODO cf. revtexln.sty. 
+\def\@LN@col{\def\@LN@column} % v4.22, removed #1. 
+\@LN@col{1}
+\def\themodulolinenumber{\relax
+  \ifnum\c@linenumber<\c@firstlinenumber \else 
+    \begingroup 
+      \@tempcnta\c@linenumber
+      \advance\@tempcnta-\c@firstlinenumber 
+      \divide\@tempcnta\c@linenumbermodulo
+      \multiply\@tempcnta\c@linenumbermodulo
+      \advance\@tempcnta\c@firstlinenumber 
+      \ifnum\@tempcnta=\c@linenumber \thelinenumber \fi
+    \endgroup 
+  \fi 
+}
+\newcommand\modulolinenumbers{% 
+  \@ifstar
+    {\def\@LN@maybe@moduloresume{% 
+       \global\let\@LN@maybe@normalLineNumber
+                            \@LN@normalLineNumber}% 
+                                       \@LN@modulolinenos}% 
+    {\let\@LN@maybe@moduloresume\relax \@LN@modulolinenos}%
+}
+
+\global\let\@LN@maybe@normalLineNumber\relax 
+\let\@LN@maybe@moduloresume\relax 
+\gdef\@LN@normalLineNumber{% 
+  \ifnum\c@linenumber=\c@firstlinenumber \else 
+    \ifnum\c@linenumber>\@ne
+      \def\LineNumber{\thelinenumber}% 
+    \fi 
+  \fi 
+  \global\let\@LN@maybe@normalLineNumber\relax}
+\newcommand*\@LN@modulolinenos[1][\z@]{%
+  \let\LineNumber\themodulolinenumber
+  \ifnum#1>\@ne 
+    \chardef                      % v4.22, note below 
+      \c@linenumbermodulo#1\relax
+  \else\ifnum#1=\@ne 
+    \def\LineNumber{\@LN@ifgreat\thelinenumber}% 
+  \fi\fi
+  }
+\let\@LN@ifgreat\relax
+\newcommand*\firstlinenumber[1]{% 
+  \chardef\c@firstlinenumber#1\relax 
+  \let\@LN@ifgreat\@LN@ifgreat@critical} 
+\def\@LN@ifgreat@critical{%
+  \ifnum\c@linenumber<\c@firstlinenumber 
+    \expandafter \@gobble 
+  \fi}% 
+\let\c@firstlinenumber=\z@
+\chardef\c@linenumbermodulo=5      % v4.2; ugly? 
+\modulolinenumbers[1]
+\DeclareOption{addpageno}{% 
+  \AtEndOfPackage{\RequirePackage{vplref}[2005/04/25]}} 
+\DeclareOption{mathrefs}{\AtBeginDocument 
+  {\RequirePackage{ednmath0}[2004/08/20]}} 
+\let\if@LN@edtable\iffalse 
+
+\DeclareOption{edtable}{\let\if@LN@edtable\iftrue}
+
+\DeclareOption{longtable}{\let\if@LN@edtable\iftrue 
+  \PassOptionsToPackage{longtable}{edtable}}
+
+\DeclareOption{nolongtablepatch}{% 
+  \PassOptionsToPackage{nolongtablepatch}{edtable}}
+
+\DeclareOption{left}{\leftlinenumbers*}
+
+\DeclareOption{right}{\rightlinenumbers*}
+
+\DeclareOption{switch}{\setpagewiselinenumbers
+                       \switchlinenumbers
+                       \runningpagewiselinenumbers}
+
+\DeclareOption{switch*}{\setpagewiselinenumbers
+                        \switchlinenumbers*%
+                        \runningpagewiselinenumbers}
+
+\DeclareOption{columnwise}{\setpagewiselinenumbers
+                           \columnwiselinenumberstrue
+                           \realpagewiselinenumbers}
+\DeclareOption{pagewise}{\setpagewiselinenumbers
+                         \realpagewiselinenumbers}
+
+\DeclareOption{running}{\setrunninglinenumbers}
+
+\DeclareOption{modulo}{\modulolinenumbers\relax}
+
+\DeclareOption{modulo*}{\modulolinenumbers*\relax}
+
+\DeclareOption{mathlines}{\linenumberdisplaymath}
+
+\DeclareOption{displaymath}{\PackageWarningNoLine{lineno}{%
+                Option [displaymath] is obsolete -- default now!}} 
+
+\DeclareOption{hyperref}{\PackageWarningNoLine{lineno}{%
+                Option [hyperref] is obsolete. 
+  \MessageBreak The hyperref package is detected automatically.}}
+
+\AtBeginDocument{% 
+  \@ifpackageloaded{nameref}{%
+    \gdef\@LN@ExtraLabelItems{{}{}{}}% 
+  }{%
+    \global\let\@LN@@linelabel\@LN@linelabel 
+    \gdef\@LN@linelabel{% 
+     \expandafter 
+      \ifx\csname ver@nameref.sty\endcsname\relax \else 
+        \gdef\@LN@ExtraLabelItems{{}{}{}}% 
+      \fi 
+      \global\let\@LN@linelabel\@LN@@linelabel 
+      \global\let\@LN@@linelabel\relax 
+      \@LN@linelabel
+    }% 
+  }%
+} 
+
+
+\ProcessOptions
+
+\if@LN@edtable \RequirePackage{edtable}[2005/03/07] \fi 
+ \@ifundefined{mathindent}{
+  \let\LN@displaymath\[%
+  \let\LN@enddisplaymath\]%
+  \renewcommand\[{\begin{linenomath}\LN@displaymath}%
+  \renewcommand\]{\LN@enddisplaymath\end{linenomath}}%
+  \let\LN@equation\equation
+  \let\LN@endequation\endequation
+  \renewenvironment{equation}%
+     {\linenomath\LN@equation}%
+     {\LN@endequation\endlinenomath}%
+%% }
+ }{}% \@ifundefined{mathindent} -- 3rd arg v4.2, was \par! 
+  \let\LN@eqnarray\eqnarray
+  \let\LN@endeqnarray\endeqnarray
+  \renewenvironment{eqnarray}%
+     {\linenomath\LN@eqnarray}%
+     {\LN@endeqnarray\endlinenomath}%
+%%}
+\let\@LN@iglobal\global                           % v4.22 
+
+\newcommand\internallinenumbers{\setrunninglinenumbers 
+     \let\@@par\internallinenumberpar
+     \ifx\@par\@@@par\let\@par\internallinenumberpar\fi
+     \ifx\par\@@@par\let\par\internallinenumberpar\fi
+     \ifx\@par\linenumberpar\let\@par\internallinenumberpar\fi
+     \ifx\par\linenumberpar\let\par\internallinenumberpar\fi
+     \@ifnextchar[{\resetlinenumber}%]
+                 {\@ifstar{\let\c@linenumber\c@internallinenumber
+                           \let\@LN@iglobal\relax % v4.22
+                           \c@linenumber\@ne}{}}%
+     }
+
+\let\endinternallinenumbers\endlinenumbers
+\@namedef{internallinenumbers*}{\internallinenumbers*}
+\expandafter\let\csname endinternallinenumbers*\endcsname\endlinenumbers
+
+\newcount\c@internallinenumber
+\newcount\c@internallinenumbers
+
+\newcommand\internallinenumberpar{% 
+     \ifvmode\@@@par\else\ifinner\@@@par\else\@@@par
+     \begingroup
+        \c@internallinenumbers\prevgraf
+        \setbox\@tempboxa\hbox{\vbox{\makeinternalLinenumbers}}%
+        \dp\@tempboxa\prevdepth
+        \ht\@tempboxa\z@
+        \nobreak\vskip-\prevdepth
+        \nointerlineskip\box\@tempboxa
+     \endgroup 
+     \fi\fi
+     }
+
+\newcommand\makeinternalLinenumbers{% 
+   \ifnum\c@internallinenumbers>\z@               % v4.2
+   \hb@xt@\z@{\makeLineNumber}% 
+   \@LN@iglobal                                   % v4.22 
+     \advance\c@linenumber\@ne
+   \advance\c@internallinenumbers\m@ne
+   \expandafter\makeinternalLinenumbers\fi
+   }
+\newcommand\lineref{%
+  \ifx\c@linenumber\c@runninglinenumber
+     \expandafter\linerefr
+  \else
+     \expandafter\linerefp
+  \fi
+}
+
+\newcommand*\linerefp[2][\z@]{{%
+   \let\@thelinenumber\thelinenumber
+   \edef\thelinenumber{\advance\c@linenumber#1\relax
+                       \noexpand\@thelinenumber}%
+   \ref{#2}%
+}}
+
+% This goes deep into \LaTeX's internals.
+
+\newcommand*\linerefr[2][\z@]{{%
+   \def\@@linerefadd{\advance\c@linenumber#1}%
+   \expandafter\@setref\csname r@#2\endcsname
+   \@linerefadd{#2}%
+}}
+
+\newcommand*\@linerefadd[2]{\c@linenumber=#1\@@linerefadd\relax
+                            \thelinenumber}
+
+\newcommand\quotelinenumbers
+   {\@ifstar\linenumbers{\@ifnextchar[\linenumbers{\linenumbers*}}}
+
+\newdimen\quotelinenumbersep
+\quotelinenumbersep=\linenumbersep
+\let\quotelinenumberfont\linenumberfont
+
+\newcommand\numquotelist
+   {\leftlinenumbers
+    \linenumbersep\quotelinenumbersep
+    \let\linenumberfont\quotelinenumberfont
+    \addtolength{\linenumbersep}{-\@totalleftmargin}%
+    \quotelinenumbers
+   }
+
+\newenvironment{numquote}     {\quote\numquotelist}{\endquote}
+\newenvironment{numquotation} {\quotation\numquotelist}{\endquotation}
+\newenvironment{numquote*}    {\quote\numquotelist*}{\endquote}
+\newenvironment{numquotation*}{\quotation\numquotelist*}{\endquotation}
+
+\newenvironment{bframe}
+  {\par
+   \@tempdima\textwidth
+   \advance\@tempdima 2\bframesep
+   \setbox\bframebox\hb@xt@\textwidth{%
+      \hskip-\bframesep
+      \vrule\@width\bframerule\@height\baselineskip\@depth\bframesep
+      \advance\@tempdima-2\bframerule
+      \hskip\@tempdima
+      \vrule\@width\bframerule\@height\baselineskip\@depth\bframesep
+      \hskip-\bframesep
+   }%
+   \hbox{\hskip-\bframesep
+         \vrule\@width\@tempdima\@height\bframerule\@depth\z@}%
+   \nointerlineskip
+   \copy\bframebox
+   \nobreak
+   \kern-\baselineskip
+   \runninglinenumbers
+   \def\makeLineNumber{\copy\bframebox\hss}%
+  }
+  {\par
+   \kern-\prevdepth
+   \kern\bframesep
+   \nointerlineskip
+   \@tempdima\textwidth
+   \advance\@tempdima 2\bframesep
+   \hbox{\hskip-\bframesep
+         \vrule\@width\@tempdima\@height\bframerule\@depth\z@}%
+  }
+
+\newdimen\bframerule
+\bframerule=\fboxrule
+
+\newdimen\bframesep
+\bframesep=\fboxsep
+
+\newbox\bframebox
+ 
+\def\PostponeVadjust#1{% 
+  \global\let\vadjust\@LN@@vadjust 
+  \vadjust{\penalty-\@Mppvacodepen}% 
+  \g@addto@macro\@LN@vadjustlist{#1\@lt}% 
+}
+\let\@LN@@vadjust\vadjust 
+\global\let\@LN@vadjustlist\@empty 
+\global\let\@LN@do@vadjusts\relax 
+
+
+\def\PassVadjustList{% 
+  \unvbox\@cclv 
+  \expandafter \@LN@xnext \@LN@vadjustlist \@@ 
+                          \@tempa \@LN@vadjustlist 
+  \ifx\@LN@do@vadjusts\relax 
+    \gdef\@LN@do@vadjusts{\global\let\@LN@do@vadjusts\relax}% 
+  \fi 
+  \expandafter \g@addto@macro \expandafter \@LN@do@vadjusts 
+    \expandafter {\@tempa}% 
+} 
+
+
+\DeclareRobustCommand\@LN@changevadjust{% 
+  \ifvmode\else\ifinner\else 
+    \global\let\vadjust\PostponeVadjust 
+  \fi\fi 
+} 
+ 
+\CheckCommand*\@parboxrestore{\@arrayparboxrestore\let\\\@normalcr}
+
+\def\@tempa#1#2{% 
+  \expandafter \def \expandafter#2\expandafter{\expandafter
+    \ifLineNumbers\expandafter#1\expandafter\fi#2}% 
+} 
+
+\@tempa\nolinenumbers\@arrayparboxrestore 
+
+\@tempa\@LN@changevadjust\vspace 
+\@tempa\@LN@changevadjust\pagebreak 
+\@tempa\@LN@changevadjust\nopagebreak 
+\DeclareRobustCommand\\{% 
+  \ifLineNumbers 
+    \expandafter \@LN@cr 
+  \else 
+    \expandafter \@normalcr 
+  \fi 
+} 
+\def\@LN@cr{% 
+  \@ifstar{\@LN@changevadjust\@normalcr*}% 
+          {\@ifnextchar[{\@LN@changevadjust\@normalcr}\@normalcr}% 
+} 
+
+\AtBeginDocument{% 
+  \let\if@LN@obsolete\iffalse 
+  \@ifpackageloaded{linenox0}{\let\if@LN@obsolete\iftrue}\relax 
+  \@ifpackageloaded{linenox1}{\let\if@LN@obsolete\iftrue}\relax 
+  \@ifpackageloaded{lnopatch}{\let\if@LN@obsolete\iftrue}\relax
+  \if@LN@obsolete 
+    \PackageError{lineno}{Obsolete extension package(s)}{% 
+    With lineno.sty version 4.00 or later,\MessageBreak 
+    linenox0/linenox1/lnopatch.sty must no longer be loaded.}% 
+  \fi 
+} 
+
+\advance\maxdeadcycles 100
+\linenumberdisplaymath

@@ -1,0 +1,75 @@
+\section{Problem Formulation}\label{s:3}
+We formulate the mixed-traffic signal control problem at a multi-leg roundabout as a finite-horizon Markov Decision Process (MDP) defined by the tuple $(\mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma)$, where $\mathcal{S}$ is the continuous state space, $\mathcal{A}$ is the discrete action space, $\mathcal{P}: \mathcal{S} \times \mathcal{A} \times \mathcal{S} \rightarrow [0, 1]$ represents the transition probability distribution governed by the microscopic traffic dynamics, $\mathcal{R}: \mathcal{S} \times \mathcal{A} \rightarrow \mathbb{R}$ is the scalar reward function, and $\gamma \in [0, 1)$ is the discount factor.
+
+\subsection{Network and Mixed-Traffic Representation}
+The intersection network consists of $N=6$ inbound approaches and $M$ internal circulatory ring segments. Traffic comprises $C = 5$ vehicle classes: passenger cars, motorcycles, buses, trucks, and emergency vehicles. To represent differences in physical footprint and acceleration dynamics in Vietnamese urban traffic, each vehicle class $c \in \mathcal{C}$ is assigned a Passenger Car Unit (PCU) equivalence factor $w_{\text{pcu}}(c)$.
+
+\begin{table}[htbp]
+\caption{PCU values for 5 vehicle classes}
+\centering
+\begin{tabular}{ll}
+\toprule
+Vehicle class & PCU  \\
+\midrule
+passenger     & 1    \\
+bus           & 2    \\
+truck         & 2.5  \\
+motorcycle    & 0.3  \\
+emergency     & 1    \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{State Space}
+At each decision step $t$, which occurs every $\Delta t$ seconds, the centralized agent observes the normalized vector $\mathbf{s}_t \in [0,1]^D$, where $D=N(C+1)+M+K+1$:
+\begin{equation*}
+\mathbf{s}_t = \big[\mathbf{f}_{\text{inbound}},\mathbf{f}_{\text{circulatory}},\mathbf{p}_t,\tau_{\text{green}}\big].
+\end{equation*}
+
+For each inbound approach $i \in \{1,\dots,N\}$, the inbound feature block $\mathbf{f}_{\text{inbound}} \in \mathbb{R}^{N(C+1)}$ contains the normalized PCU density $\rho_i$ and the per-class queue vector $\mathbf{q}_i \in [0,1]^C$. The density is the accumulated PCU across lanes $\mathcal{L}_i$, divided by the theoretical capacity $C_i^{\text{pcu}}$, and clipped to $[0,1]$. The queue vector records the normalized count of halting vehicles, defined by $v_{\text{speed}}<0.1\text{ m/s}$, for each class $c$:
+\begin{align*}
+\rho_i &= \min\left(1.0,\frac{\sum_{v \in \mathcal{L}_i} w_{\text{pcu}}(\text{class}(v))}{C_i^{\text{pcu}}}\right),\\
+\mathbf{q}_i[c] &= \min\left(1.0,\frac{\sum_{\substack{v \in \mathcal{L}_i\\ \text{class}(v)=c}} \mathbb{I}(v_{\text{speed}}<0.1)}{Q_{\max,c}}\right),
+\end{align*}
+where $Q_{\max,c}$ is the queue saturation threshold for vehicle class $c$.
+
+The circulatory feature block $\mathbf{f}_{\text{circulatory}} \in \mathbb{R}^M$ contains the normalized average speed of each internal segment $j \in \{1,\dots,M\}$, where $V_{\text{limit}}$ is the design speed limit of the circulatory roadway. The phase configuration is represented by the one-hot vector $\mathbf{p}_t \in \{0,1\}^K$ for the active green signal group and the elapsed-phase ratio. These scalar features are defined as
+\begin{align*}
+v_j &= \min\left(1.0,\frac{\overline{V}_{\text{ring},j}}{V_{\text{limit}}}\right),\\
+\tau_{\text{green}} &= \min\left(1.0,\frac{t_{\text{elapsed}}}{t_{\text{max\_green}}}\right).
+\end{align*}
+
+\subsection{Action Space}
+The action space $\mathcal{A}=\{0,1,\dots,K-1\}$ selects a green phase configuration. If the selected action $a_t$ matches the current phase $a_{t-1}$, that phase is held. A request to switch phases is suppressed while $t_{\text{elapsed}}<t_{\text{min\_green}}$; once the minimum green time is satisfied, the signal passes through a yellow clearance interval of duration $t_{\text{yellow}}$, followed by an optional all-red interval of duration $t_{\text{red}}$, before the target green phase $a_t$ is activated. This enforces safe state transitions, following standard traffic lights regulation.
+
+\subsection{Reward Function}
+The objective is to maximize network throughput and prevent internal circulatory gridlock while ensuring smooth phase transitions. The scalar reward combines delay reduction, queue suppression, switching regularization, and deadlock avoidance:
+\begin{equation*}
+R_t=-w_{\text{wait}}\widetilde{W}_t-w_{\text{queue}}\widetilde{Q}_t-P^{\text{flicker}}_t-P_{\text{deadlock}}.
+\end{equation*}
+
+The normalized PCU waiting delay $\widetilde{W}_t$ weights vehicle waiting times by their PCU equivalence, while the normalized total queue $\widetilde{Q}_t$ measures the number of halted vehicles relative to the aggregate queue threshold:
+\begin{align*}
+\widetilde{W}_t &= \min\left(1.0,\frac{\sum_{\substack{i=1,\ldots,N\\v \in \mathcal{L}_i}} w_{\text{pcu}}(v)\,t_{\text{wait}}(v)}{t_{\text{max\_wait}}\sum_{i=1}^N C_i^{\text{pcu}}}\right),\\
+\widetilde{Q}_t &= \min\left(1.0, \frac{\sum_{i=1}^N \text{HaltingVehicles}_i}{\sum_{i=1}^N Q_{\max,i}}\right).
+\end{align*}
+
+Frequent phase changes are penalized using the exponentially decaying switching trace $F_t$, with decay factor $\lambda_f \in (0,1)$:
+\begin{align*}
+F_t &= \lambda_f F_{t-1}+\mathbb{I}(a_t \neq a_{t-1}),\\
+P^{\text{flicker}}_t &= w_{\text{flicker}}\frac{F_t}{(1-\lambda_f)^{-1}}.
+\end{align*}
+A deadlock penalty is applied when the average internal ring velocity remains below the standstill threshold $v_{\text{stall}}=0.1\text{ m/s}$ for longer than $t_{\text{stall\_limit}}$:
+\begin{equation*}
+P_{\text{deadlock}}=
+\begin{cases}
+C_{\text{deadlock}}, & \text{if } t_{\text{stall}}>t_{\text{stall\_limit}},\\
+0, & \text{otherwise}.
+\end{cases}
+\end{equation*}
+
+\subsection{Optimization Objective}
+The reinforcement learning agent optimizes the parameterized policy $\pi_\theta(a_t\mid\mathbf{s}_t)$ to maximize the expected discounted cumulative return:
+\begin{equation*}
+\max_{\theta}\mathbb{E}_{\tau\sim\pi_\theta}\left[\sum_{t=0}^{T}\gamma^t R_t\right].
+\end{equation*}
